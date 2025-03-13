@@ -557,7 +557,7 @@ class Stream(WebRTCConnectionMixin):
         from twilio.twiml.voice_response import Connect, VoiceResponse
 
         response = VoiceResponse()
-        response.say("Connecting to the AI assistant.")
+        # response.say("Connecting to the AI assistant.")
         connect = Connect()
         connect.stream(url=f"wss://{request.url.hostname}/telephone/handler")
         response.append(connect)
