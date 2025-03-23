@@ -453,7 +453,7 @@ class Stream(WebRTCConnectionMixin):
                 gr.HTML(
                     f"""
                 <h1 style='text-align: center'>
-                {ui_args.get("title", "Audio Streaming (Powered by FastRTC ⚡️)")}
+                {ui_args.get("title", "BitGenius Agent")}
                 </h1>
                 """
                 )
