@@ -26,6 +26,7 @@ from .tracks import (
     StreamHandlerBase,
     StreamHandlerImpl,
     VideoEventHandler,
+    VideoStreamHandler,
 )
 from .webrtc_connection_mixin import WebRTCConnectionMixin
 
@@ -254,6 +255,7 @@ class WebRTC(Component, WebRTCConnectionMixin):
             | StreamHandlerImpl
             | AudioVideoStreamHandlerImpl
             | VideoEventHandler
+            | VideoStreamHandler
             | None
         ) = None,
         inputs: Block | Sequence[Block] | set[Block] | None = None,
@@ -263,6 +265,7 @@ class WebRTC(Component, WebRTCConnectionMixin):
         concurrency_id: str | None = None,
         time_limit: float | None = None,
         trigger: Callable | None = None,
+        send_input_on: Literal["submit", "change"] = "change",
     ):
         from gradio.blocks import Block
 
@@ -304,7 +307,7 @@ class WebRTC(Component, WebRTCConnectionMixin):
                     "In the webrtc stream event, the only output component must be the WebRTC component."
                 )
             for input_component in inputs[1:]:  # type: ignore
-                if hasattr(input_component, "change"):
+                if hasattr(input_component, "change") and send_input_on == "change":
                     input_component.change(  # type: ignore
                         self.set_input,
                         inputs=inputs,
@@ -313,6 +316,13 @@ class WebRTC(Component, WebRTCConnectionMixin):
                         concurrency_limit=None,
                         time_limit=None,
                         js=js,
+                    )
+                if hasattr(input_component, "submit") and send_input_on == "submit":
+                    input_component.submit(  # type: ignore
+                        self.set_input,
+                        inputs=inputs,
+                        outputs=None,
+                        concurrency_id=concurrency_id,
                     )
             return self.tick(  # type: ignore
                 self.set_input,

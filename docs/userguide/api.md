@@ -358,6 +358,25 @@ async function setupWebRTC(peerConnection) {
     const offer = await peerConnection.createOffer();
     await peerConnection.setLocalDescription(offer);
 
+    let webrtc_id = Math.random().toString(36).substring(7)
+
+    // Send ICE candidates to server
+    // (especially needed when server is behind firewall)
+    peerConnection.onicecandidate = ({ candidate }) => {
+        if (candidate) {
+            console.debug("Sending ICE candidate", candidate);
+            fetch('/webrtc/offer', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                candidate: candidate.toJSON(),
+                webrtc_id: webrtc_id,
+                type: "ice-candidate",
+                    })
+                })
+            }
+    };
+
     // Send offer to server
     const response = await fetch('/webrtc/offer', {
         method: 'POST',
@@ -365,7 +384,7 @@ async function setupWebRTC(peerConnection) {
         body: JSON.stringify({
             sdp: offer.sdp,
             type: offer.type,
-            webrtc_id: Math.random().toString(36).substring(7)
+            webrtc_id: webrtc_id
         })
     });
 

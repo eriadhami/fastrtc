@@ -17,6 +17,7 @@ from typing import (
 )
 
 from aiortc import (
+    RTCIceCandidate,
     RTCPeerConnection,
     RTCSessionDescription,
 )
@@ -31,7 +32,9 @@ from fastrtc.tracks import (
     StreamHandlerBase,
     StreamHandlerImpl,
     VideoCallback,
+    VideoEventHandler,
     VideoStreamHandler,
+    VideoStreamHandler_,
 )
 from fastrtc.utils import (
     AdditionalOutputs,
@@ -41,7 +44,7 @@ from fastrtc.utils import (
 
 Track = (
     VideoCallback
-    | VideoStreamHandler
+    | VideoStreamHandler_
     | AudioCallback
     | ServerToClientAudio
     | ServerToClientVideo
@@ -64,7 +67,7 @@ class OutputQueue:
 
 class WebRTCConnectionMixin:
     def __init__(self):
-        self.pcs = set([])
+        self.pcs: dict[str, RTCPeerConnection] = {}
         self.relay = MediaRelay()
         self.connections = defaultdict(list)
         self.data_channels = {}
@@ -147,6 +150,83 @@ class WebRTCConnectionMixin:
     async def handle_offer(self, body, set_outputs):
         logger.debug("Starting to handle offer")
         logger.debug("Offer body %s", body)
+
+        if body.get("type") == "ice-candidate" and "candidate" in body:
+            webrtc_id = body.get("webrtc_id")
+            if webrtc_id not in self.pcs:
+                logger.warning(
+                    f"Received ICE candidate for unknown connection: {webrtc_id}"
+                )
+                return JSONResponse(
+                    status_code=200,
+                    content={
+                        "status": "failed",
+                        "meta": {"error": "unknown_connection"},
+                    },
+                )
+
+            pc = self.pcs[webrtc_id]
+            if pc.connectionState != "closed":
+                try:
+                    # Parse the candidate string from the browser
+                    candidate_str = body["candidate"].get("candidate", "")
+
+                    # Example format: "candidate:2393089663 1 udp 2122260223 192.168.86.60 63692 typ host generation 0 ufrag LkZb network-id 1 network-cost 10"
+                    # We need to parse this string to extract the required fields
+
+                    # Parse the candidate string
+                    parts = candidate_str.split()
+                    if len(parts) >= 10 and parts[0].startswith("candidate:"):
+                        foundation = parts[0].split(":", 1)[1]
+                        component = int(parts[1])
+                        protocol = parts[2]
+                        priority = int(parts[3])
+                        ip = parts[4]
+                        port = int(parts[5])
+                        # Find the candidate type
+                        typ_index = parts.index("typ")
+                        candidate_type = parts[typ_index + 1]
+
+                        # Create the RTCIceCandidate object
+                        ice_candidate = RTCIceCandidate(
+                            component=component,
+                            foundation=foundation,
+                            ip=ip,
+                            port=port,
+                            priority=priority,
+                            protocol=protocol,
+                            type=candidate_type,
+                            sdpMid=body["candidate"].get("sdpMid"),
+                            sdpMLineIndex=body["candidate"].get("sdpMLineIndex"),
+                        )
+
+                        # Add the candidate to the peer connection
+                        await pc.addIceCandidate(ice_candidate)
+                        logger.debug(f"Added ICE candidate for {webrtc_id}")
+                        return JSONResponse(
+                            status_code=200, content={"status": "success"}
+                        )
+                    else:
+                        logger.error(f"Invalid candidate format: {candidate_str}")
+                        return JSONResponse(
+                            status_code=200,
+                            content={
+                                "status": "failed",
+                                "meta": {"error": "invalid_candidate_format"},
+                            },
+                        )
+                except Exception as e:
+                    logger.error(f"Error adding ICE candidate: {e}", exc_info=True)
+                    return JSONResponse(
+                        status_code=200,
+                        content={"status": "failed", "meta": {"error": str(e)}},
+                    )
+
+            return JSONResponse(
+                status_code=200,
+                content={"status": "failed", "meta": {"error": "connection_closed"}},
+            )
+
         if len(self.connections) >= cast(int, self.concurrency_limit):
             return JSONResponse(
                 status_code=200,
@@ -162,7 +242,7 @@ class WebRTCConnectionMixin:
         offer = RTCSessionDescription(sdp=body["sdp"], type=body["type"])
 
         pc = RTCPeerConnection()
-        self.pcs.add(pc)
+        self.pcs[body["webrtc_id"]] = pc
 
         if isinstance(self.event_handler, StreamHandlerBase):
             handler = self.event_handler.copy()
@@ -174,6 +254,11 @@ class WebRTCConnectionMixin:
                 handler.video_receive = webrtc_error_handler(handler.video_receive)  # type: ignore
             if hasattr(handler, "video_emit"):
                 handler.video_emit = webrtc_error_handler(handler.video_emit)  # type: ignore
+        elif isinstance(self.event_handler, VideoStreamHandler):
+            self.event_handler.callable = cast(
+                VideoEventHandler, webrtc_error_handler(self.event_handler.callable)
+            )
+            handler = self.event_handler
         else:
             handler = webrtc_error_handler(cast(Callable, self.event_handler))
 
@@ -185,7 +270,7 @@ class WebRTCConnectionMixin:
             if pc.iceConnectionState == "failed":
                 await pc.close()
                 self.connections.pop(body["webrtc_id"], None)
-                self.pcs.discard(pc)
+                self.pcs.pop(body["webrtc_id"], None)
 
         @pc.on("connectionstatechange")
         async def _():
@@ -196,7 +281,7 @@ class WebRTCConnectionMixin:
                 if connection:
                     for conn in connection:
                         conn.stop()
-                self.pcs.discard(pc)
+                self.pcs.pop(body["webrtc_id"], None)
             if pc.connectionState == "connected":
                 self.connection_timeouts[body["webrtc_id"]].set()
                 if self.time_limit is not None:
@@ -208,17 +293,25 @@ class WebRTCConnectionMixin:
             handler = self.handlers[body["webrtc_id"]]
 
             if self.modality == "video" and track.kind == "video":
+                args = {}
+                handler_ = handler
+                if isinstance(handler, VideoStreamHandler):
+                    handler_ = handler.callable
+                    args["fps"] = handler.fps
+                    args["skip_frames"] = handler.skip_frames
                 cb = VideoCallback(
                     relay.subscribe(track),
-                    event_handler=cast(Callable, handler),
+                    event_handler=cast(Callable, handler_),
                     set_additional_outputs=set_outputs,
                     mode=cast(Literal["send", "send-receive"], self.mode),
+                    **args,
                 )
             elif self.modality == "audio-video" and track.kind == "video":
-                cb = VideoStreamHandler(
+                cb = VideoStreamHandler_(
                     relay.subscribe(track),
                     event_handler=handler,  # type: ignore
                     set_additional_outputs=set_outputs,
+                    fps=cast(StreamHandlerImpl, handler).fps,
                 )
             elif self.modality in ["audio", "audio-video"] and track.kind == "audio":
                 eh = cast(StreamHandlerImpl, handler)
@@ -245,10 +338,17 @@ class WebRTCConnectionMixin:
 
         if self.mode == "receive":
             if self.modality == "video":
-                cb = ServerToClientVideo(
-                    cast(Callable, self.event_handler),
-                    set_additional_outputs=set_outputs,
-                )
+                if isinstance(self.event_handler, VideoStreamHandler):
+                    cb = ServerToClientVideo(
+                        cast(Callable, self.event_handler.callable),
+                        set_additional_outputs=set_outputs,
+                        fps=self.event_handler.fps,
+                    )
+                else:
+                    cb = ServerToClientVideo(
+                        cast(Callable, self.event_handler),
+                        set_additional_outputs=set_outputs,
+                    )
             elif self.modality == "audio":
                 cb = ServerToClientAudio(
                     cast(Callable, self.event_handler),

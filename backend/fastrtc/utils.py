@@ -11,6 +11,7 @@ from contextvars import ContextVar
 from typing import Any, Callable, Literal, Protocol, TypedDict, cast
 
 import av
+import librosa
 import numpy as np
 from numpy.typing import NDArray
 from pydub import AudioSegment
@@ -134,7 +135,7 @@ async def player_worker_decode(
         rate=sample_rate,
         frame_size=frame_size,
     )
-
+    first_sample_rate = None
     while not thread_quit.is_set():
         try:
             # Get next frame
@@ -174,19 +175,29 @@ async def player_worker_decode(
                 layout,  # type: ignore
             )
             format = "s16" if audio_array.dtype == "int16" else "fltp"  # type: ignore
+            if first_sample_rate is None:
+                first_sample_rate = sample_rate
+
+            if format == "s16":
+                audio_array = audio_to_float32((sample_rate, audio_array))
+
+            if first_sample_rate != sample_rate:
+                audio_array = librosa.resample(
+                    audio_array, target_sr=first_sample_rate, orig_sr=sample_rate
+                )
 
             if audio_array.ndim == 1:
                 audio_array = audio_array.reshape(1, -1)
 
-            # Convert to audio frame and resample
+            # Convert to audio frame and
+
             # This runs in the same timeout context
             frame = av.AudioFrame.from_ndarray(  # type: ignore
                 audio_array,  # type: ignore
-                format=format,
+                format="fltp",
                 layout=layout,  # type: ignore
             )
-            frame.sample_rate = sample_rate
-
+            frame.sample_rate = first_sample_rate
             for processed_frame in audio_resampler.resample(frame):
                 processed_frame.pts = audio_samples
                 processed_frame.time_base = audio_time_base

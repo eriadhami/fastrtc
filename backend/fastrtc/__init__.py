@@ -21,6 +21,7 @@ from .tracks import (
     AudioVideoStreamHandler,
     StreamHandler,
     VideoEmitType,
+    VideoStreamHandler,
 )
 from .utils import (
     AdditionalOutputs,
@@ -73,4 +74,5 @@ __all__ = [
     "PauseDetectionModel",
     "get_silero_model",
     "SileroVadOptions",
+    "VideoStreamHandler",
 ]

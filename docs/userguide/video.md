@@ -55,3 +55,73 @@ and set the `mode="receive"` in the `WebRTC` component.
         mode="receive"
     )
     ```
+
+## Skipping Frames
+
+If your event handler is not quite real-time yet, then the output feed will look very laggy.
+
+To fix this, you can set the `skip_frames` parameter to `True`. This will skip the frames that are received while the event handler is still running.
+
+``` py title="Skipping Frames"
+import time
+
+import numpy as np
+from fastrtc import Stream, VideoStreamHandler
+
+
+def process_image(image):
+    time.sleep(
+        0.2
+    )  # Simulating 200ms processing time per frame; input arrives faster (30 FPS).
+    return np.flip(image, axis=0)
+
+
+stream = Stream(
+    handler=VideoStreamHandler(process_image, skip_frames=True),
+    modality="video",
+    mode="send-receive",
+)
+
+stream.ui.launch()
+```
+
+## Setting the Output Frame Rate
+
+You can set the output frame rate by setting the `fps` parameter in the `VideoStreamHandler`.
+
+``` py title="Setting the Output Frame Rate"
+def generation():
+    url = "https://github.com/user-attachments/assets/9636dc97-4fee-46bb-abb8-b92e69c08c71"
+    cap = cv2.VideoCapture(url)
+    iterating = True
+
+    # FPS calculation variables
+    frame_count = 0
+    start_time = time.time()
+    fps = 0
+
+    while iterating:
+        iterating, frame = cap.read()
+
+        # Calculate and print FPS
+        frame_count += 1
+        elapsed_time = time.time() - start_time
+        if elapsed_time >= 1.0:  # Update FPS every second
+            fps = frame_count / elapsed_time
+            yield frame, AdditionalOutputs(fps)
+            frame_count = 0
+            start_time = time.time()
+        else:
+            yield frame
+
+
+stream = Stream(
+    handler=VideoStreamHandler(generation, fps=60),
+    modality="video",
+    mode="receive",
+    additional_outputs=[gr.Number(label="FPS")],
+    additional_outputs_handler=lambda prev, cur: cur,
+)
+
+stream.ui.launch()
+```
