@@ -51,12 +51,16 @@
     }
   });
 
-  let _on_change_cb = (msg: "change" | "tick" | "stopword") => {
+  let _on_change_cb = (msg: "change" | "tick" | "stopword" | any) => {
     if (msg === "stopword") {
       stopword_recognized = true;
       setTimeout(() => {
         stopword_recognized = false;
       }, 3000);
+    } else if (msg.type === "end_stream") {
+      stream_state = "closed";
+      stop(pc);
+      on_change_cb(msg);
     } else {
       console.debug("calling on_change_cb with msg", msg);
       on_change_cb(msg);
@@ -69,6 +73,7 @@
 
   export let server: {
     offer: (body: any) => Promise<any>;
+    turn: () => Promise<any>;
   };
 
   let stream_state: "open" | "closed" | "waiting" = "closed";
@@ -144,7 +149,17 @@
     }
     _webrtc_id = Math.random().toString(36).substring(2);
     value = _webrtc_id;
+    stream_state = "waiting";
+    await server.turn().then((rtc_configuration_) => {
+      if (rtc_configuration_.error) {
+        dispatch("error", rtc_configuration_.error);
+        return;
+      }
+      rtc_configuration = rtc_configuration_;
+      console.info("rtc_configuration", rtc_configuration_);
+    });
     pc = new RTCPeerConnection(rtc_configuration);
+    console.info("created");
     pc.addEventListener("connectionstatechange", async (event) => {
       switch (pc.connectionState) {
         case "connected":
@@ -169,7 +184,6 @@
           break;
       }
     });
-    stream_state = "waiting";
     stream = null;
 
     try {

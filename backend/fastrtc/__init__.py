@@ -1,6 +1,10 @@
 from .credentials import (
+    get_cloudflare_turn_credentials,
+    get_cloudflare_turn_credentials_async,
     get_hf_turn_credentials,
+    get_hf_turn_credentials_async,
     get_turn_credentials,
+    get_turn_credentials_async,
     get_twilio_turn_credentials,
 )
 from .pause_detection import (
@@ -25,6 +29,7 @@ from .tracks import (
 )
 from .utils import (
     AdditionalOutputs,
+    CloseStream,
     Warning,
     WebRTCError,
     aggregate_bytes_to_16bit,
@@ -33,6 +38,7 @@ from .utils import (
     audio_to_file,
     audio_to_float32,
     audio_to_int16,
+    get_current_context,
     wait_for_item,
 )
 from .webrtc import (
@@ -68,6 +74,10 @@ __all__ = [
     "Warning",
     "get_tts_model",
     "KokoroTTSOptions",
+    "get_cloudflare_turn_credentials_async",
+    "get_hf_turn_credentials_async",
+    "get_turn_credentials_async",
+    "get_cloudflare_turn_credentials",
     "wait_for_item",
     "UIArgs",
     "ModelOptions",
@@ -75,4 +85,6 @@ __all__ = [
     "get_silero_model",
     "SileroVadOptions",
     "VideoStreamHandler",
+    "CloseStream",
+    "get_current_context",
 ]

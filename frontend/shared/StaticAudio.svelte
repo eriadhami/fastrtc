@@ -29,6 +29,17 @@
   let pc: RTCPeerConnection;
   let _webrtc_id = Math.random().toString(36).substring(2);
 
+  let _on_change_cb = (msg: "change" | "tick" | "stopword" | any) => {
+    if (msg.type === "end_stream") {
+      on_change_cb(msg);
+      stream_state = "closed";
+      stop(pc);
+    } else {
+      console.debug("calling on_change_cb with msg", msg);
+      on_change_cb(msg);
+    }
+  };
+
   const dispatch = createEventDispatcher<{
     tick: undefined;
     error: string;
@@ -75,7 +86,7 @@
         server.offer,
         _webrtc_id,
         "audio",
-        on_change_cb,
+        _on_change_cb,
       )
         .then((connection) => {
           clearTimeout(timeoutId);

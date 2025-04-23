@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Sequence
 from typing import (
     TYPE_CHECKING,
     Any,
     Concatenate,
-    Iterable,
     Literal,
     ParamSpec,
-    Sequence,
     TypeVar,
     cast,
 )
@@ -28,6 +26,7 @@ from .tracks import (
     VideoEventHandler,
     VideoStreamHandler,
 )
+from .utils import RTCConfigurationCallable
 from .webrtc_connection_mixin import WebRTCConnectionMixin
 
 if TYPE_CHECKING:
@@ -79,9 +78,11 @@ class WebRTC(Component, WebRTCConnectionMixin):
         render: bool = True,
         key: int | str | None = None,
         mirror_webcam: bool = True,
-        rtc_configuration: dict[str, Any] | None = None,
+        rtc_configuration: dict[str, Any] | None | RTCConfigurationCallable = None,
+        server_rtc_configuration: dict[str, Any] | None = None,
         track_constraints: dict[str, Any] | None = None,
         time_limit: float | None = None,
+        allow_extra_tracks: bool = False,
         mode: Literal["send-receive", "receive", "send"] = "send-receive",
         modality: Literal["video", "audio", "audio-video"] = "video",
         rtp_params: dict[str, Any] | None = None,
@@ -112,8 +113,11 @@ class WebRTC(Component, WebRTCConnectionMixin):
             key: if assigned, will be used to assume identity across a re-render. Components that have the same key across a re-render will have their value preserved.
             mirror_webcam: if True webcam will be mirrored. Default is True.
             rtc_configuration: WebRTC configuration options. See https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/RTCPeerConnection . If running the demo on a remote server, you will need to specify a rtc_configuration. See https://freddyaboulton.github.io/gradio-webrtc/deployment/
+            server_rtc_configuration: Optional dictionary for RTCPeerConnection configuration on the server side. Note
+                                      that setting iceServers to be an empty list will mean no ICE servers will be used in the server.
             track_constraints: Media track constraints for WebRTC. For example, to set video height, width use {"width": {"exact": 800}, "height": {"exact": 600}, "aspectRatio": {"exact": 1.33333}}
             time_limit: Maximum duration in seconds for recording.
+            allow_extra_tracks: Allow tracks not supported by the modality. For example, a peer connection with an audio track would be allowed even if modality is 'video', which normally throws a ``ValueError`` exception.
             mode: WebRTC mode - "send-receive", "receive", or "send".
             modality: Type of media - "video" or "audio".
             rtp_params: See https://developer.mozilla.org/en-US/docs/Web/API/RTCRtpSender/setParameters. If you are changing the video resolution, you can set this to {"degradationPreference": "maintain-framerate"} to keep the frame rate consistent.
@@ -130,6 +134,10 @@ class WebRTC(Component, WebRTCConnectionMixin):
         self.mirror_webcam = mirror_webcam
         self.concurrency_limit = 1
         self.rtc_configuration = rtc_configuration
+        self.server_rtc_configuration = self.convert_to_aiortc_format(
+            server_rtc_configuration
+        )
+        self.allow_extra_tracks = allow_extra_tracks
         self.mode = mode
         self.modality = modality
         self.icon_button_color = icon_button_color
@@ -356,6 +364,13 @@ class WebRTC(Component, WebRTCConnectionMixin):
                 outputs=None,
                 concurrency_id=concurrency_id,
             )
+
+    @server
+    async def turn(self, _):
+        try:
+            return await self.resolve_rtc_configuration()
+        except Exception as e:
+            return {"error": str(e)}
 
     @server
     async def offer(self, body):

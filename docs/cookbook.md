@@ -61,6 +61,19 @@ document.querySelectorAll('.tag-button').forEach(button => {
 
 <div class="grid cards" markdown>
 
+-   :speaking_head:{ .lg .middle }:llama:{ .lg .middle } __Talk to Llama 4__
+{: data-tags="audio,llm,voice-chat"}
+
+    ---
+
+    Talk to Llama 4 using Groq + Cloudflare.
+
+    <video width=98% src="https://github.com/user-attachments/assets/f6d09e47-5e40-4296-b6cd-11d7f68baee2" controls style="text-align: center"></video>
+
+    [:octicons-arrow-right-24: Demo](https://huggingface.co/spaces/fastrtc/talk-to-llama4)
+
+    [:octicons-code-16: Code](https://huggingface.co/spaces/fastrtc/talk-to-llama4/blob/main/app.py)
+
 -   :speaking_head:{ .lg .middle }:eyes:{ .lg .middle } __Gemini Audio Video Chat__
 {: data-tags="audio,video,real-time-api"}
 

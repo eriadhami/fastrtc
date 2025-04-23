@@ -23,6 +23,7 @@
   export let width: number | undefined;
   export let server: {
     offer: (body: any) => Promise<any>;
+    turn: () => Promise<any>;
   };
 
   export let container = false;
@@ -46,7 +47,9 @@
       msg?.type === "warning" ||
       msg?.type === "error"
     ) {
-      gradio.dispatch(msg?.type === "error" ? "error" : "warning", msg.message);
+      gradio.dispatch(msg?.type === "error" ? "error" : "warning", msg.data);
+    } else if (msg?.type === "end_stream") {
+      gradio.dispatch("warning", msg.data);
     } else if (msg?.type === "fetch_output") {
       gradio.dispatch("state_change");
     } else if (msg?.type === "send_input") {
@@ -71,6 +74,11 @@
         "error",
         `Too many concurrent connections. Please try again later!`,
       );
+    } else if (
+      msg.status === "failed" &&
+      msg.meta?.error === "connection_already_exists"
+    ) {
+      gradio.dispatch("error", "Connection already exists");
     } else {
       gradio.dispatch("error", "Unexpected server error");
     }

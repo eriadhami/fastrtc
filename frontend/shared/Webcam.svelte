@@ -56,6 +56,7 @@
   export let stream_every = 1;
   export let server: {
     offer: (body: any) => Promise<any>;
+    turn: () => Promise<any>;
   };
 
   export let include_audio: boolean;
@@ -124,6 +125,18 @@
     }
   }
 
+  let _on_change_cb = (msg: "change" | "tick" | "stopword" | any) => {
+    if (msg.type === "end_stream") {
+      on_change_cb(msg);
+      stream_state = "closed";
+      stop(pc);
+      access_webcam();
+    } else {
+      console.debug("calling on_change_cb with msg", msg);
+      on_change_cb(msg);
+    }
+  };
+
   let recording = false;
   let stream: MediaStream;
 
@@ -133,6 +146,14 @@
 
   async function start_webrtc(): Promise<void> {
     if (stream_state === "closed") {
+      await server.turn().then((rtc_configuration_) => {
+        if (rtc_configuration_.error) {
+          dispatch("error", rtc_configuration_.error);
+          return;
+        }
+        rtc_configuration = rtc_configuration_;
+        console.info("rtc_configuration", rtc_configuration_);
+      });
       pc = new RTCPeerConnection(rtc_configuration);
       pc.addEventListener("connectionstatechange", async (event) => {
         switch (pc.connectionState) {
@@ -171,7 +192,7 @@
         server.offer,
         webrtc_id,
         "video",
-        on_change_cb,
+        _on_change_cb,
         rtp_params,
         undefined,
         reject_cb,

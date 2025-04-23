@@ -25,10 +25,29 @@
     tick: undefined;
   }>();
 
+  let _on_change_cb = (msg: "change" | "tick" | "stopword" | any) => {
+    if (msg.type === "end_stream") {
+      on_change_cb(msg);
+      stream_state = "closed";
+      stop(pc);
+    } else {
+      console.debug("calling on_change_cb with msg", msg);
+      on_change_cb(msg);
+    }
+  };
+
   let stream_state = "closed";
 
   $: if (value === "start_webrtc_stream") {
     _webrtc_id = Math.random().toString(36).substring(2);
+    server
+      .turn()
+      .then((rtc_configuration_) => {
+        rtc_configuration = rtc_configuration_;
+      })
+      .catch((error) => {
+        dispatch("error", error);
+      });
     value = _webrtc_id;
     pc = new RTCPeerConnection(rtc_configuration);
     pc.addEventListener("connectionstatechange", async (event) => {
@@ -62,7 +81,7 @@
       server.offer,
       _webrtc_id,
       "video",
-      on_change_cb,
+      _on_change_cb,
     )
       .then((connection) => {
         clearTimeout(timeoutId);

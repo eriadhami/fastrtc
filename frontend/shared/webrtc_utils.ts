@@ -80,7 +80,8 @@ export async function start(
       event_json?.type === "error" ||
       event_json?.type === "send_input" ||
       event_json?.type === "fetch_output" ||
-      event_json?.type === "stopword"
+      event_json?.type === "stopword" ||
+      event_json?.type === "end_stream"
     ) {
       on_change_cb(event_json ?? event.data);
     }

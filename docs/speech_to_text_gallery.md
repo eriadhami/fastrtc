@@ -66,6 +66,23 @@ document.querySelectorAll('.tag-button').forEach(button => {
     
     [:octicons-code-16: Repository](https://github.com/Codeblockz/distil-whisper-FastRTC)
 
+-   :speaking_head:{ .lg .middle }:eyes:{ .lg .middle } Kroko-ASR 
+{: data-tags="sherpa-onnx"}
+
+    ---
+
+    Description
+    [Kroko-ASR](https://huggingface.co/Banafo/Kroko-ASR) is a lightweight TTS model 
+
+    Install Instructions
+    ```python
+    pip install fastrtc-kroko
+    ```
+    Check out the fastRTC-Kroko docs for examples!
+
+    [:octicons-code-16: Repository](https://github.com/sgarg26/fastrtc-kroko)
+
+
 -   :speaking_head:{ .lg .middle }:eyes:{ .lg .middle } __Your STT Model__
 {: data-tags="pytorch"}
 
