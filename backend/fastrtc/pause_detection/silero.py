@@ -2,6 +2,7 @@ import logging
 import warnings
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import Optional
 
 import click
 import numpy as np
@@ -9,6 +10,7 @@ from huggingface_hub import hf_hub_download
 from numpy.typing import NDArray
 
 from ..utils import AudioChunk, audio_to_float32
+from .deepfilter import DeepFilter2Processor, DeepFilterOptions
 from .protocol import PauseDetectionModel
 
 logger = logging.getLogger(__name__)
@@ -17,11 +19,23 @@ logger = logging.getLogger(__name__)
 # The code below is adapted from https://github.com/gpt-omni/mini-omni/blob/main/utils/vad.py
 
 
-@lru_cache
-def get_silero_model() -> PauseDetectionModel:
-    """Returns the VAD model instance and warms it up with dummy data."""
-    # Warm up the model with dummy data
+# Cache for model instances without DeepFilter options
+_model_cache: dict[bool, PauseDetectionModel] = {}
 
+
+def get_silero_model(
+    enable_deepfilter: bool = False,
+    deepfilter_options: Optional[DeepFilterOptions] = None,
+) -> PauseDetectionModel:
+    """Returns the VAD model instance and warms it up with dummy data.
+
+    Args:
+        enable_deepfilter: Whether to enable DeepFilter2 preprocessing.
+        deepfilter_options: Configuration options for DeepFilter2.
+
+    Returns:
+        PauseDetectionModel instance with optional DeepFilter2 preprocessing.
+    """
     try:
         import importlib.util
 
@@ -30,10 +44,23 @@ def get_silero_model() -> PauseDetectionModel:
             raise RuntimeError("Install fastrtc[vad] to use ReplyOnPause")
     except (ValueError, ModuleNotFoundError):
         raise RuntimeError("Install fastrtc[vad] to use ReplyOnPause")
-    model = SileroVADModel()
+    
+    # Use simple caching for models without custom options
+    if deepfilter_options is None and enable_deepfilter in _model_cache:
+        return _model_cache[enable_deepfilter]
+    
+    model = SileroVADModel(
+        deepfilter_options=deepfilter_options,
+        enable_deepfilter=enable_deepfilter,
+    )
     print(click.style("INFO", fg="green") + ":\t  Warming up VAD model.")
     model.warmup()
     print(click.style("INFO", fg="green") + ":\t  VAD model warmed up.")
+    
+    # Cache if using default options
+    if deepfilter_options is None:
+        _model_cache[enable_deepfilter] = model
+    
     return model
 
 
@@ -74,7 +101,17 @@ class SileroVADModel:
             repo_id="freddyaboulton/silero-vad", filename="silero_vad.onnx"
         )
 
-    def __init__(self):
+    def __init__(
+        self,
+        deepfilter_options: Optional[DeepFilterOptions] = None,
+        enable_deepfilter: bool = False,
+    ):
+        """Initialize SileroVADModel with optional DeepFilter2 preprocessing.
+
+        Args:
+            deepfilter_options: Configuration options for DeepFilter2.
+            enable_deepfilter: Whether to enable DeepFilter2 preprocessing.
+        """
         try:
             import onnxruntime
         except ImportError as e:
@@ -94,6 +131,18 @@ class SileroVADModel:
             providers=["CPUExecutionProvider"],
             sess_options=opts,
         )
+
+        # Initialize DeepFilter2 if enabled
+        self.deepfilter_processor = None
+        if enable_deepfilter:
+            try:
+                if deepfilter_options is None:
+                    deepfilter_options = DeepFilterOptions(enabled=True)
+                self.deepfilter_processor = DeepFilter2Processor(deepfilter_options)
+                logger.info("DeepFilter2 preprocessing enabled for VAD")
+            except Exception as e:
+                logger.warning(f"Failed to initialize DeepFilter2: {e}")
+                self.deepfilter_processor = None
 
     def get_initial_state(self, batch_size: int):
         h = np.zeros((2, batch_size, 64), dtype=np.float32)
@@ -275,6 +324,13 @@ class SileroVADModel:
         logger.debug("VAD audio shape input: %s", audio_.shape)
         try:
             audio_ = audio_to_float32(audio_)
+            
+            # Apply DeepFilter2 preprocessing if enabled
+            if self.deepfilter_processor is not None:
+                logger.debug("Applying DeepFilter2 preprocessing")
+                audio_ = self.deepfilter_processor.process(audio_, sampling_rate)
+                logger.debug("DeepFilter2 preprocessing complete")
+            
             sr = 16000
             if sr != sampling_rate:
                 try:

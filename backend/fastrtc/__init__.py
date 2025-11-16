@@ -8,9 +8,12 @@ from .credentials import (
     get_twilio_turn_credentials,
 )
 from .pause_detection import (
+    DeepFilter2Processor,
+    DeepFilterOptions,
     ModelOptions,
     PauseDetectionModel,
     SileroVadOptions,
+    get_deepfilter_processor,
     get_silero_model,
 )
 from .reply_on_pause import AlgoOptions, ReplyOnPause
@@ -94,4 +97,7 @@ __all__ = [
     "get_current_context",
     "CartesiaTTSOptions",
     "WebRTCData",
+    "DeepFilter2Processor",
+    "DeepFilterOptions",
+    "get_deepfilter_processor",
 ]

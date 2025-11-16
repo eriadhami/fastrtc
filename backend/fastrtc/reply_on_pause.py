@@ -9,7 +9,12 @@ from typing import Any, Literal, cast
 import numpy as np
 from numpy.typing import NDArray
 
-from .pause_detection import ModelOptions, PauseDetectionModel, get_silero_model
+from .pause_detection import (
+    DeepFilterOptions,
+    ModelOptions,
+    PauseDetectionModel,
+    get_silero_model,
+)
 from .tracks import EmitType, StreamHandler
 from .utils import AdditionalOutputs, WebRTCData, create_message, split_output
 
@@ -124,6 +129,8 @@ class ReplyOnPause(StreamHandler):
         input_sample_rate: int = 48000,
         model: PauseDetectionModel | None = None,
         needs_args: bool = False,
+        enable_deepfilter: bool = False,
+        deepfilter_options: DeepFilterOptions | None = None,
     ):
         """
         Initializes the ReplyOnPause handler.
@@ -142,6 +149,8 @@ class ReplyOnPause(StreamHandler):
             input_sample_rate: The expected sample rate of incoming audio.
             model: An optional pre-initialized VAD model instance.
             needs_args: Whether the reply function expects additional arguments.
+            enable_deepfilter: Whether to enable DeepFilter2 preprocessing before VAD.
+            deepfilter_options: Configuration options for DeepFilter2.
         """
         super().__init__(
             expected_layout,
@@ -151,7 +160,10 @@ class ReplyOnPause(StreamHandler):
         )
         self.can_interrupt = can_interrupt
         self.expected_layout: Literal["mono", "stereo"] = expected_layout
-        self.model = model or get_silero_model()
+        self.model = model or get_silero_model(
+            enable_deepfilter=enable_deepfilter,
+            deepfilter_options=deepfilter_options,
+        )
         self.fn = fn
         self.is_async = inspect.isasyncgenfunction(fn)
         self.event = Event()
@@ -163,6 +175,8 @@ class ReplyOnPause(StreamHandler):
         self.algo_options = algo_options or AlgoOptions()
         self.startup_fn = startup_fn
         self.needs_args = needs_args
+        self.enable_deepfilter = enable_deepfilter
+        self.deepfilter_options = deepfilter_options
 
     @property
     def _needs_additional_inputs(self) -> bool:
@@ -199,6 +213,8 @@ class ReplyOnPause(StreamHandler):
             self.input_sample_rate,
             self.model,
             self.needs_args,
+            self.enable_deepfilter,
+            self.deepfilter_options,
         )
 
     def determine_pause(
