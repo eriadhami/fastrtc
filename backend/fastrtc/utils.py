@@ -16,6 +16,8 @@ from typing import Any, Literal, Protocol, TypedDict, cast
 import av
 import librosa
 import numpy as np
+from fastapi import WebSocket
+from gradio.data_classes import GradioModel, GradioRootModel
 from numpy.typing import NDArray
 from pydub import AudioSegment
 
@@ -28,6 +30,16 @@ AUDIO_PTIME = 0.020
 class AudioChunk(TypedDict):
     start: int
     end: int
+
+
+class WebRTCData(GradioModel):
+    webrtc_id: str
+    textbox: str = ""
+    audio: Any | None = None
+
+
+class WebRTCModel(GradioRootModel):
+    root: WebRTCData | str
 
 
 class AdditionalOutputs:
@@ -53,6 +65,7 @@ def create_message(
         "error",
         "warning",
         "log",
+        "update_connection",
     ],
     data: list[Any] | str,
 ) -> str:
@@ -67,6 +80,7 @@ current_channel: ContextVar[DataChannel | None] = ContextVar(
 @dataclass
 class Context:
     webrtc_id: str
+    websocket: WebSocket | None = None
 
 
 current_context: ContextVar[Context | None] = ContextVar(
@@ -247,8 +261,8 @@ async def player_worker_decode(
             import traceback
 
             exec = traceback.format_exc()
-            print("traceback %s", exec)
-            print("Error processing frame: %s", str(e))
+            logger.error("traceback %s", exec)
+            logger.error("Error processing frame: %s", str(e))
             if isinstance(e, WebRTCError):
                 raise e
             else:

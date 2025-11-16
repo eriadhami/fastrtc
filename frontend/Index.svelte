@@ -8,11 +8,10 @@
   import StaticVideo from "./shared/StaticVideo.svelte";
   import StaticAudio from "./shared/StaticAudio.svelte";
   import InteractiveAudio from "./shared/InteractiveAudio.svelte";
-
+  import type { WebRTCValue } from "./shared/utils";
   export let elem_id = "";
   export let elem_classes: string[] = [];
   export let visible = true;
-  export let value: string = "__webrtc_value__";
   export let button_labels: { start: string; stop: string; waiting: string };
 
   export let label: string;
@@ -24,6 +23,8 @@
   export let server: {
     offer: (body: any) => Promise<any>;
     turn: () => Promise<any>;
+    trigger_response: (body: any) => Promise<any>;
+    quit_output_stream: (body: any) => Promise<any>;
   };
 
   export let container = false;
@@ -40,25 +41,47 @@
   export let icon_button_color: string = "var(--color-accent)";
   export let pulse_color: string = "var(--color-accent)";
   export let icon_radius: number = 50;
+  export let variant: "textbox" | "wave" = "wave";
+  export let connection_state: "open" | "closed" | "unset" = "unset";
+  export let full_screen: boolean | null = null;
+
+  export let value: WebRTCValue | string =
+    variant === "textbox" ||
+    ((mode === "send-receive" || mode == "send") && modality === "audio")
+      ? {
+          textbox: "",
+          webrtc_id: "__webrtc_value__",
+        }
+      : "__webrtc_value__";
 
   const on_change_cb = (msg: "change" | "tick" | any) => {
+    console.log("on_change_cb in index.svelte", msg);
     if (
       msg?.type === "info" ||
       msg?.type === "warning" ||
       msg?.type === "error"
     ) {
-      gradio.dispatch(msg?.type === "error" ? "error" : "warning", msg.data);
+      gradio.dispatch(
+        msg?.type === "error" ? "error" : "warning",
+        msg?.data || msg?.message,
+      );
     } else if (msg?.type === "end_stream") {
       gradio.dispatch("warning", msg.data);
     } else if (msg?.type === "fetch_output") {
       gradio.dispatch("state_change");
     } else if (msg?.type === "send_input") {
       gradio.dispatch("tick");
+    } else if (msg?.type === "submit") {
+      console.log("submit in index.svelte", msg.data);
+      gradio.dispatch("submit", msg.data);
     } else if (msg?.type === "connection_timeout") {
       gradio.dispatch(
         "warning",
         "Taking a while to connect. Are you on a VPN?",
       );
+    } else if (msg?.type === "update_connection") {
+      console.log("update_connection in index.svelte", msg.data);
+      connection_state = msg.data;
     }
     if (msg.type === "state_change") {
       gradio.dispatch(msg === "change" ? "state_change" : "tick");
@@ -96,7 +119,7 @@
   {elem_classes}
   {height}
   {width}
-  {container}
+  container={full_screen ? false : true}
   {scale}
   {min_width}
   allow_overflow={false}
@@ -155,6 +178,8 @@
       {pulse_color}
       {icon_radius}
       {button_labels}
+      {connection_state}
+      {full_screen}
       on:clear={() => gradio.dispatch("clear")}
       on:play={() => gradio.dispatch("play")}
       on:pause={() => gradio.dispatch("pause")}
@@ -189,9 +214,24 @@
       {icon_radius}
       {pulse_color}
       {button_labels}
+      {variant}
+      {connection_state}
+      {full_screen}
+      on:start_recording={() => gradio.dispatch("start_recording")}
+      on:stop_recording={() => gradio.dispatch("stop_recording")}
       on:tick={() => gradio.dispatch("tick")}
       on:error={({ detail }) => gradio.dispatch("error", detail)}
       on:warning={({ detail }) => gradio.dispatch("warning", detail)}
     />
   {/if}
 </Block>
+
+<style>
+  :global(.gradio-component footer) {
+    display: none !important;
+  }
+
+  :global(.gradio-component footer) {
+    display: none !important;
+  }
+</style>

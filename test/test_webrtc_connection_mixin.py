@@ -39,6 +39,7 @@ class MinimalTestStream(WebRTCConnectionMixin):
         )
         self.time_limit = time_limit
         self.allow_extra_tracks = allow_extra_tracks
+        self.server_rtc_configuration = None
 
     def mount(self, app: FastAPI, path: str = ""):
         from fastapi import APIRouter

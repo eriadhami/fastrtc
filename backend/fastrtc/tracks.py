@@ -38,6 +38,7 @@ from fastrtc.utils import (
     CloseStream,
     Context,
     DataChannel,
+    WebRTCData,
     WebRTCError,
     create_message,
     current_channel,
@@ -114,14 +115,14 @@ class VideoCallback(VideoStreamTrack):
         self.channel_set.set()
 
     def set_args(self, args: list[Any]):
-        self.latest_args = ["__webrtc_value__"] + list(args)
+        self.latest_args = list(args)
 
     def add_frame_to_payload(
         self, args: list[Any], frame: np.ndarray | None
     ) -> list[Any]:
         new_args = []
-        for val in args:
-            if isinstance(val, str) and val == "__webrtc_value__":
+        for i, val in enumerate(args):
+            if i == 0:
                 new_args.append(frame)
             else:
                 new_args.append(val)
@@ -398,7 +399,15 @@ class StreamHandlerBase(ABC):
             args: A list of arguments.
         """
         logger.debug("setting args in audio callback %s", args)
-        self.latest_args = ["__webrtc_value__"] + list(args)
+        if not isinstance(args, list):
+            raise TypeError("args must be a list")
+        if not args:
+            raise ValueError("args cannot be empty")
+        if isinstance(args[0], WebRTCData):
+            self.latest_args = list(args)
+        else:
+            self.latest_args = ["__webrtc_value__"] + list(args)
+        logger.debug("set args", self.latest_args)
         self.args_set.set()
 
     def reset(self):
@@ -927,7 +936,7 @@ class ServerToClientVideo(VideoStreamTrack):
             current_context.set(self.context)
             if self.generator is None:
                 self.generator = cast(
-                    Generator[Any, None, Any], self.event_handler(*self.latest_args)
+                    Generator[Any, None, Any], self.event_handler(*self.latest_args[1:])
                 )
             try:
                 next_array, outputs = split_output(next(self.generator))
@@ -1004,7 +1013,7 @@ class ServerToClientAudio(AudioStreamTrack):
         self.args_set.wait()
         current_channel.set(self.channel)
         if self.generator is None:
-            self.generator = self.event_handler(*self.latest_args)
+            self.generator = self.event_handler(*self.latest_args[1:])
         if self.generator is not None:
             try:
                 frame = next(self.generator)

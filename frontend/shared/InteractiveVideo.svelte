@@ -5,10 +5,11 @@
   import { BlockLabel } from "@gradio/atoms";
   import Webcam from "./Webcam.svelte";
   import { Video } from "@gradio/icons";
+  import type { WebRTCValue } from "./utils";
 
   import type { I18nFormatter } from "@gradio/utils";
 
-  export let value: string = null;
+  export let value: string | WebRTCValue | null = null;
   export let label: string | undefined = undefined;
   export let show_label = true;
   export let include_audio: boolean;
@@ -20,6 +21,7 @@
   export let button_labels: { start: string; stop: string; waiting: string };
   export let server: {
     offer: (body: any) => Promise<any>;
+    turn: () => Promise<any>;
   };
   export let rtc_configuration: Object;
   export let track_constraints: MediaTrackConstraints = {};
@@ -31,6 +33,8 @@
   export let icon_button_color: string = "var(--color-accent)";
   export let pulse_color: string = "var(--color-accent)";
   export let icon_radius: number = 50;
+  export let connection_state: "open" | "closed" | "unset" = "unset";
+  export let full_screen: boolean = true;
 
   const dispatch = createEventDispatcher<{
     change: FileData | null;
@@ -43,14 +47,18 @@
     upload: FileData;
     start_recording?: never;
     stop_recording?: never;
-    tick: never;
+    tick: undefined;
   }>();
 
   let dragging = false;
   $: dispatch("drag", dragging);
 </script>
 
-<BlockLabel {show_label} Icon={Video} label={label || "Video"} />
+<BlockLabel
+  show_label={show_label && !full_screen}
+  Icon={Video}
+  label={label || "Video"}
+/>
 <div data-testid="video" class="video-container">
   <Webcam
     {rtc_configuration}
@@ -74,6 +82,8 @@
     {server}
     bind:webrtc_id={value}
     {reject_cb}
+    {connection_state}
+    {full_screen}
   />
 
   <!-- <SelectSource {sources} bind:active_source /> -->

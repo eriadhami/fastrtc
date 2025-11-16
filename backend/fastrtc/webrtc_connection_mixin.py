@@ -42,6 +42,7 @@ from fastrtc.utils import (
     AdditionalOutputs,
     Context,
     RTCConfigurationCallable,
+    WebRTCData,
     create_message,
     webrtc_error_handler,
 )
@@ -146,10 +147,35 @@ class WebRTCConnectionMixin:
         self.data_channels.pop(webrtc_id, None)
         return connection
 
+    async def update_connection(
+        self, webrtc_data: str | WebRTCData, desired_state: Literal["closed"]
+    ):
+        webrtc_id = webrtc_data
+        if isinstance(webrtc_data, WebRTCData):
+            webrtc_id = webrtc_data.webrtc_id
+        if webrtc_id in self.connections:
+            self.data_channels[webrtc_id].send(
+                create_message("update_connection", desired_state)
+            )
+
     def set_input(self, webrtc_id: str, *args):
         if webrtc_id in self.connections:
             for conn in self.connections[webrtc_id]:
                 conn.set_args(list(args))
+
+    def set_input_gradio(self, webrtc_data: WebRTCData | str, *args):
+        webrtc_id = webrtc_data
+        if isinstance(webrtc_data, WebRTCData):
+            webrtc_id = webrtc_data.webrtc_id
+        self.set_input(cast(str, webrtc_id), webrtc_data, *args)
+
+    def set_input_on_submit(self, webrtc_data: WebRTCData | str, *args):
+        webrtc_id = webrtc_data
+        if isinstance(webrtc_data, WebRTCData):
+            webrtc_id = webrtc_data.webrtc_id
+        self.set_input(cast(str, webrtc_id), webrtc_data, *args)
+        if hasattr(self.handlers[cast(str, webrtc_id)], "trigger_response"):
+            self.handlers[cast(str, webrtc_id)].trigger_response()  # type: ignore
 
     async def output_stream(
         self, webrtc_id: str
@@ -181,6 +207,19 @@ class WebRTCConnectionMixin:
                 return await run_sync(self.rtc_configuration)
         else:
             return cast(dict[str, Any], self.rtc_configuration) or {}
+
+    async def _trigger_response(self, webrtc_id: str, args: list[Any] | None = None):
+        from fastrtc import ReplyOnPause
+
+        if webrtc_id in self.connections and isinstance(
+            self.handlers[webrtc_id], ReplyOnPause
+        ):
+            if args:
+                cast(ReplyOnPause, self.handlers[webrtc_id]).set_args(args)
+            cast(ReplyOnPause, self.handlers[webrtc_id]).trigger_response()
+            return {"status": "success"}
+        else:
+            return {"status": "failed", "meta": {"error": "not_a_reply_on_pause"}}
 
     async def handle_offer(self, body, set_outputs):
         logger.debug("Starting to handle offer")

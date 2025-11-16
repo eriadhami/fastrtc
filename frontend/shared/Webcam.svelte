@@ -36,7 +36,8 @@
   export let icon_radius: number = 50;
   export let pulse_color: string = "var(--color-accent)";
   export let button_labels: { start: string; stop: string; waiting: string };
-
+  export let connection_state: "open" | "closed" | "unset" = "unset";
+  export let full_screen: boolean = true;
   export const modify_stream: (state: "open" | "closed" | "waiting") => void = (
     state: "open" | "closed" | "waiting",
   ) => {
@@ -70,7 +71,12 @@
     close_stream: undefined;
   }>();
 
-  onMount(() => (canvas = document.createElement("canvas")));
+  onMount(() => {
+    canvas = document.createElement("canvas");
+    if (full_screen) {
+      access_webcam();
+    }
+  });
 
   const handle_device_change = async (event: InputEvent): Promise<void> => {
     const target = event.target as HTMLInputElement;
@@ -146,6 +152,7 @@
 
   async function start_webrtc(): Promise<void> {
     if (stream_state === "closed") {
+      dispatch("start_recording");
       await server.turn().then((rtc_configuration_) => {
         if (rtc_configuration_.error) {
           dispatch("error", rtc_configuration_.error);
@@ -183,7 +190,7 @@
       const timeoutId = setTimeout(() => {
         // @ts-ignore
         on_change_cb({ type: "connection_timeout" });
-      }, 5000);
+      }, 10000);
 
       start(
         stream,
@@ -207,12 +214,35 @@
           stream_state = "closed";
         });
     } else {
+      dispatch("stop_recording");
       stop(pc);
       stream_state = "closed";
       _time_limit = null;
       await access_webcam();
     }
   }
+
+  async function close_connection(
+    connection_state: "open" | "closed" | "unset",
+  ) {
+    if (
+      connection_state === "open" &&
+      webcam_accessed &&
+      stream_state === "closed"
+    ) {
+      await start_webrtc();
+      connection_state = "unset";
+    } else if (
+      connection_state === "closed" &&
+      webcam_accessed &&
+      stream_state === "open"
+    ) {
+      await start_webrtc();
+      connection_state = "unset";
+    }
+  }
+
+  $: close_connection(connection_state);
 
   let options_open = false;
 
@@ -245,10 +275,13 @@
   const audio_source_callback = () => video_source.srcObject as MediaStream;
 </script>
 
-<div class="wrap">
+<div class="wrap" class:full-screen={full_screen || full_screen === null}>
   <StreamingBar time_limit={_time_limit} />
   {#if stream_state === "open" && include_audio}
-    <div class="audio-indicator">
+    <div
+      class="audio-indicator"
+      class:full-screen={full_screen || full_screen === null}
+    >
       <PulsingIcon
         {stream_state}
         {audio_source_callback}
@@ -270,7 +303,7 @@
     playsinline={true}
   />
   <!-- svelte-ignore a11y-missing-attribute -->
-  {#if !webcam_accessed}
+  {#if !webcam_accessed && !full_screen}
     <div
       in:fade={{ delay: 100, duration: 200 }}
       title="grant webcam access"
@@ -351,6 +384,14 @@
     height: var(--size-full);
   }
 
+  .wrap.full-screen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+  }
+
   .hide {
     display: none;
   }
@@ -358,12 +399,23 @@
   video {
     width: var(--size-full);
     height: var(--size-full);
+    object-fit: contain;
+  }
+
+  .full-screen video {
+    width: 100vw;
+    height: 100vh;
     object-fit: cover;
+    position: absolute;
   }
 
   .button-wrap {
     position: absolute;
-    background-color: var(--block-background-fill);
+    background-color: color-mix(
+      in srgb,
+      var(--block-background-fill) 50%,
+      transparent
+    );
     border: 1px solid var(--border-color-primary);
     border-radius: var(--radius-xl);
     padding: var(--size-1-5);
@@ -377,13 +429,16 @@
     color: var(--button-secondary-text-color);
   }
 
+  .button-wrap:hover {
+    background-color: var(--block-background-fill);
+  }
+
   .icon-with-text {
     min-width: var(--size-16);
     align-items: center;
     margin: 0 var(--spacing-xl);
     display: flex;
     justify-content: space-evenly;
-    /* Add gap between icon and text */
     gap: var(--size-2);
   }
 
@@ -394,6 +449,11 @@
     z-index: var(--layer-2);
     height: var(--size-5);
     width: var(--size-5);
+  }
+
+  .audio-indicator.full-screen {
+    height: var(--size-12);
+    width: var(--size-12);
   }
 
   @media (--screen-md) {

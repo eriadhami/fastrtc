@@ -1,7 +1,9 @@
 import inspect
 import logging
+import re
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
+from enum import Enum
 from pathlib import Path
 from typing import (
     Any,
@@ -59,6 +61,10 @@ class UIArgs(TypedDict):
     If "submit", the input will be sent when the submit event is triggered by the user.
     If "change", the input will be sent whenever the user changes the input value.
     """
+    hide_title: NotRequired[bool]
+    """If True, the title and subtitle will not be displayed."""
+    full_screen: NotRequired[bool]
+    """If False, the component will be contained within its parent instead of full screen. Default is True."""
 
 
 class Stream(WebRTCConnectionMixin):
@@ -107,6 +113,7 @@ class Stream(WebRTCConnectionMixin):
         additional_inputs: list[Component] | None = None,
         additional_outputs: list[Component] | None = None,
         ui_args: UIArgs | None = None,
+        verbose: bool = True,
     ):
         """
         Initialize the Stream instance.
@@ -128,6 +135,7 @@ class Stream(WebRTCConnectionMixin):
             additional_inputs: Optional list of extra Gradio input components.
             additional_outputs: Optional list of extra Gradio output components. Requires `additional_outputs_handler`.
             ui_args: Optional dictionary to customize the default UI appearance (title, subtitle, icon, etc.).
+            verbose: Whether to print verbose logging on startup.
 
         Raises:
             ValueError: If `additional_outputs` are provided without `additional_outputs_handler`.
@@ -137,6 +145,15 @@ class Stream(WebRTCConnectionMixin):
         self.modality = modality
         self.rtp_params = rtp_params
         self.event_handler = handler
+        if (
+            ui_args
+            and ui_args.get("variant") == "textbox"
+            and hasattr(handler, "needs_args")
+        ):
+            self.event_handler.needs_args = True  # type: ignore
+        else:
+            self.event_handler.needs_args = False  # type: ignore
+
         self.concurrency_limit = cast(
             (int),
             1 if concurrency_limit in ["default", None] else concurrency_limit,
@@ -155,10 +172,13 @@ class Stream(WebRTCConnectionMixin):
         self.server_rtc_configuration = self.convert_to_aiortc_format(
             server_rtc_configuration
         )
+        self.verbose = verbose
         self._ui = self._generate_default_ui(ui_args)
         self._ui.launch = self._wrap_gradio_launch(self._ui.launch)
 
-    def mount(self, app: FastAPI, path: str = ""):
+    def mount(
+        self, app: FastAPI, path: str = "", tags: list[str | Enum] | None = None
+    ) -> None:
         """
         Mount the stream's API endpoints onto a FastAPI application.
 
@@ -170,13 +190,14 @@ class Stream(WebRTCConnectionMixin):
         Args:
             app: The FastAPI application instance.
             path: An optional URL prefix for the mounted routes.
+            tags: Optional tags to FastAPI endpoints.
         """
         from fastapi import APIRouter
 
         router = APIRouter(prefix=path)
-        router.post("/webrtc/offer")(self.offer)
+        router.post("/webrtc/offer", tags=tags)(self.offer)
         router.websocket("/telephone/handler")(self.telephone_handler)
-        router.post("/telephone/incoming")(self.handle_incoming_call)
+        router.post("/telephone/incoming", tags=tags)(self.handle_incoming_call)
         router.websocket("/websocket/offer")(self.websocket_offer)
         lifespan = self._inject_startup_message(app.router.lifespan_context)
         app.router.lifespan_context = lifespan
@@ -278,12 +299,13 @@ class Stream(WebRTCConnectionMixin):
 
         def print_startup_message():
             self._check_colab_or_spaces()
-            print(
-                click.style("INFO", fg="green")
-                + ":\t  Visit "
-                + click.style("https://fastrtc.org/userguide/api/", fg="cyan")
-                + " for WebRTC or Websocket API docs."
-            )
+            if self.verbose:
+                print(
+                    click.style("INFO", fg="green")
+                    + ":\t  Visit "
+                    + click.style("https://fastrtc.org/userguide/api/", fg="cyan")
+                    + " for WebRTC or Websocket API docs."
+                )
 
         @contextlib.asynccontextmanager
         async def new_lifespan(app: FastAPI):
@@ -296,6 +318,21 @@ class Stream(WebRTCConnectionMixin):
                     yield
 
         return new_lifespan
+
+    def _is_html_string(self, text: str) -> bool:
+        html_pattern = re.compile(r"<[^<>]+>")
+        return bool(html_pattern.search(text))
+
+    def _format_title(self, title: str) -> str:
+        if self._is_html_string(title):
+            return title
+        else:
+            return f"<h1 style='text-align: center'>{title}</h1>"
+
+    def _format_subtitle(self, subtitle: str | None) -> str:
+        if subtitle:
+            return f"<div style='display: flex; justify-content: center; align-items: center; text-align: center; margin: 20px 0;'>{subtitle}</div>"
+        return ""
 
     def _generate_default_ui(
         self,
@@ -339,21 +376,13 @@ class Stream(WebRTCConnectionMixin):
                     same_components.append(component)
         if self.modality == "video" and self.mode == "receive":
             with gr.Blocks() as demo:
-                gr.HTML(
-                    f"""
-                <h1 style='text-align: center'>
-                {ui_args.get("title", "Video Streaming (Powered by FastRTC ⚡️)")}
-                </h1>
-                """
-                )
-                if ui_args.get("subtitle"):
-                    gr.Markdown(
-                        f"""
-                <div style='text-align: center'>
-                {ui_args.get("subtitle")}
-                </div>
-                """
+                if not ui_args.get("hide_title"):
+                    title = ui_args.get(
+                        "title", "Video Streaming (Powered by FastRTC ⚡️)"
                     )
+                    gr.HTML(self._format_title(title))
+                    if ui_args.get("subtitle"):
+                        gr.Markdown(self._format_subtitle(ui_args.get("subtitle")))
                 with gr.Row():
                     with gr.Column():
                         if additional_input_components:
@@ -367,6 +396,7 @@ class Stream(WebRTCConnectionMixin):
                             track_constraints=self.track_constraints,
                             mode="receive",
                             modality="video",
+                            full_screen=ui_args.get("full_screen"),
                         )
                         self.webrtc_component = output_video
                         for component in additional_output_components:
@@ -391,21 +421,13 @@ class Stream(WebRTCConnectionMixin):
                     )
         elif self.modality == "video" and self.mode == "send":
             with gr.Blocks() as demo:
-                gr.HTML(
-                    f"""
-                <h1 style='text-align: center'>
-                {ui_args.get("title", "Video Streaming (Powered by FastRTC ⚡️)")}
-                </h1>
-                """
-                )
-                if ui_args.get("subtitle"):
-                    gr.Markdown(
-                        f"""
-                <div style='text-align: center'>
-                {ui_args.get("subtitle")}
-                </div>
-                """
+                if not ui_args.get("hide_title"):
+                    title = ui_args.get(
+                        "title", "Video Streaming (Powered by FastRTC ⚡️)"
                     )
+                    gr.HTML(self._format_title(title))
+                    if ui_args.get("subtitle"):
+                        gr.Markdown(self._format_subtitle(ui_args.get("subtitle")))
                 with gr.Row():
                     if additional_input_components:
                         with gr.Column():
@@ -418,6 +440,7 @@ class Stream(WebRTCConnectionMixin):
                             track_constraints=self.track_constraints,
                             mode="send",
                             modality="video",
+                            full_screen=ui_args.get("full_screen"),
                         )
                         self.webrtc_component = output_video
                         for component in additional_output_components:
@@ -440,25 +463,17 @@ class Stream(WebRTCConnectionMixin):
                         outputs=additional_output_components,
                     )
         elif self.modality == "video" and self.mode == "send-receive":
-            css = """.my-group {max-width: 600px !important; max-height: 600 !important;}
-                      .my-column {display: flex !important; justify-content: center !important; align-items: center !important};"""
+            if ui_args.get("full_screen") is False:
+                css = """.my-column {display: flex !important; justify-content: center !important; align-items: center !important};"""
+            else:
+                css = """.gradio-container .sidebar {background-color: color-mix(in srgb, var(--block-background-fill) 50%, transparent) !important;}
+                body.dark .gradio-container .sidebar {background-color: color-mix(in srgb, var(--block-background-fill) 50%, transparent) !important;}"""
 
             with gr.Blocks(css=css) as demo:
-                gr.HTML(
-                    f"""
-                <h1 style='text-align: center'>
-                {ui_args.get("title", "Video Streaming (Powered by FastRTC ⚡️)")}
-                </h1>
-                """
-                )
+                title = ui_args.get("title", "Video Streaming (Powered by FastRTC ⚡️)")
+                gr.HTML(self._format_title(title))
                 if ui_args.get("subtitle"):
-                    gr.Markdown(
-                        f"""
-                <div style='text-align: center'>
-                {ui_args.get("subtitle")}
-                </div>
-                """
-                    )
+                    gr.Markdown(self._format_subtitle(ui_args.get("subtitle")))
                 with gr.Column(elem_classes=["my-column"]):
                     with gr.Group(elem_classes=["my-group"]):
                         image = WebRTC(
@@ -467,14 +482,35 @@ class Stream(WebRTCConnectionMixin):
                             track_constraints=self.track_constraints,
                             mode="send-receive",
                             modality="video",
+                            full_screen=ui_args.get("full_screen"),
                         )
-                        for component in additional_input_components:
-                            component.render()
-                if additional_output_components:
-                    with gr.Column():
-                        for component in additional_output_components:
-                            if component not in same_components:
+                        if ui_args.get("full_screen") is False:
+                            for component in additional_input_components:
                                 component.render()
+                if additional_input_components:
+                    input_components_to_render = [
+                        component
+                        for component in additional_input_components
+                        if component not in same_components
+                    ]
+                    if (
+                        input_components_to_render
+                        and ui_args.get("full_screen") is not False
+                    ):
+                        with gr.Sidebar(position="left"):
+                            for component in input_components_to_render:
+                                component.render()
+                if additional_output_components:
+                    if ui_args.get("full_screen") is False:
+                        with gr.Group():
+                            for component in additional_output_components:
+                                if component not in same_components:
+                                    component.render()
+                    else:
+                        with gr.Sidebar(position="right"):
+                            for component in additional_output_components:
+                                if component not in same_components:
+                                    component.render()
                 self.webrtc_component = image
                 image.stream(
                     fn=self.event_handler,
@@ -494,21 +530,13 @@ class Stream(WebRTCConnectionMixin):
                     )
         elif self.modality == "audio" and self.mode == "receive":
             with gr.Blocks() as demo:
-                gr.HTML(
-                    f"""
-                <h1 style='text-align: center'>
-                {ui_args.get("title", "Audio Streaming (Powered by FastRTC ⚡️)")}
-                </h1>
-                """
-                )
-                if ui_args.get("subtitle"):
-                    gr.Markdown(
-                        f"""
-                <div style='text-align: center'>
-                {ui_args.get("subtitle")}
-                </div>
-                """
+                if not ui_args.get("hide_title"):
+                    title = ui_args.get(
+                        "title", "Audio Streaming (Powered by FastRTC ⚡️)"
                     )
+                    gr.HTML(self._format_title(title))
+                    if ui_args.get("subtitle"):
+                        gr.Markdown(self._format_subtitle(ui_args.get("subtitle")))
                 with gr.Row():
                     with gr.Column():
                         for component in additional_input_components:
@@ -525,6 +553,7 @@ class Stream(WebRTCConnectionMixin):
                             icon_button_color=ui_args.get("icon_button_color"),
                             pulse_color=ui_args.get("pulse_color"),
                             icon_radius=ui_args.get("icon_radius"),
+                            full_screen=ui_args.get("full_screen"),
                         )
                         self.webrtc_component = output_video
                         for component in additional_output_components:
@@ -549,43 +578,67 @@ class Stream(WebRTCConnectionMixin):
                     )
         elif self.modality == "audio" and self.mode == "send":
             with gr.Blocks() as demo:
-                gr.HTML(
-                    f"""
-                <h1 style='text-align: center'>
-                {ui_args.get("title", "Audio Streaming (Powered by FastRTC ⚡️)")}
-                </h1>
-                """
-                )
-                if ui_args.get("subtitle"):
-                    gr.Markdown(
-                        f"""
-                <div style='text-align: center'>
-                {ui_args.get("subtitle")}
-                </div>
-                """
+                if not ui_args.get("hide_title"):
+                    title = ui_args.get(
+                        "title", "Audio Streaming (Powered by FastRTC ⚡️)"
                     )
-                with gr.Row():
-                    with gr.Column():
-                        with gr.Group():
-                            image = WebRTC(
-                                label="Stream",
-                                rtc_configuration=self.rtc_configuration,
-                                track_constraints=self.track_constraints,
-                                mode="send",
-                                modality="audio",
-                                icon=ui_args.get("icon"),
-                                icon_button_color=ui_args.get("icon_button_color"),
-                                pulse_color=ui_args.get("pulse_color"),
-                                icon_radius=ui_args.get("icon_radius"),
-                            )
-                            self.webrtc_component = image
-                            for component in additional_input_components:
-                                if component not in same_components:
+                    gr.HTML(self._format_title(title))
+                    if ui_args.get("subtitle"):
+                        gr.Markdown(self._format_subtitle(ui_args.get("subtitle")))
+                if ui_args.get("variant", "textbox"):
+                    with gr.Row():
+                        if additional_input_components:
+                            with gr.Column():
+                                for component in additional_input_components:
                                     component.render()
-                    if additional_output_components:
+                        diff_output_components = [
+                            component
+                            for component in additional_output_components
+                            if component not in same_components
+                        ]
+                        if diff_output_components:
+                            with gr.Column():
+                                for component in diff_output_components:
+                                    component.render()
+                    with gr.Row():
+                        image = WebRTC(
+                            label="Stream",
+                            rtc_configuration=self.rtc_configuration,
+                            track_constraints=self.track_constraints,
+                            mode="send",
+                            modality="audio",
+                            icon=ui_args.get("icon"),
+                            icon_button_color=ui_args.get("icon_button_color"),
+                            pulse_color=ui_args.get("pulse_color"),
+                            icon_radius=ui_args.get("icon_radius"),
+                            variant=ui_args.get("variant", "wave"),
+                            full_screen=ui_args.get("full_screen"),
+                        )
+                else:
+                    with gr.Row():
                         with gr.Column():
-                            for component in additional_output_components:
-                                component.render()
+                            with gr.Group():
+                                image = WebRTC(
+                                    label="Stream",
+                                    rtc_configuration=self.rtc_configuration,
+                                    track_constraints=self.track_constraints,
+                                    mode="send",
+                                    modality="audio",
+                                    icon=ui_args.get("icon"),
+                                    icon_button_color=ui_args.get("icon_button_color"),
+                                    pulse_color=ui_args.get("pulse_color"),
+                                    icon_radius=ui_args.get("icon_radius"),
+                                    variant=ui_args.get("variant", "wave"),
+                                    full_screen=ui_args.get("full_screen"),
+                                )
+                                for component in additional_input_components:
+                                    if component not in same_components:
+                                        component.render()
+                                if additional_output_components:
+                                    with gr.Column():
+                                        for component in additional_output_components:
+                                            component.render()
+                self.webrtc_component = image
                 image.stream(
                     fn=self.event_handler,
                     inputs=[image] + additional_input_components,
@@ -603,80 +656,155 @@ class Stream(WebRTCConnectionMixin):
                         concurrency_limit=self.concurrency_limit_gradio,  # type: ignore
                     )
         elif self.modality == "audio" and self.mode == "send-receive":
-            with gr.Blocks() as demo:
-                gr.HTML(
-                    f"""
-                <h1 style='text-align: center'>
-                {ui_args.get("title", "BitGenius Agent")}
-                </h1>
-                """
-                )
-                if ui_args.get("subtitle"):
-                    gr.Markdown(
-                        f"""
-                <div style='text-align: center'>
-                    {ui_args.get("subtitle")}
-                </div>
-                """
-                    )
-                with gr.Row():
-                    with gr.Column():
-                        with gr.Group():
-                            image = WebRTC(
-                                label="Stream",
-                                rtc_configuration=self.rtc_configuration,
-                                track_constraints=self.track_constraints,
-                                mode="send-receive",
-                                modality="audio",
-                                icon=ui_args.get("icon"),
-                                icon_button_color=ui_args.get("icon_button_color"),
-                                pulse_color=ui_args.get("pulse_color"),
-                                icon_radius=ui_args.get("icon_radius"),
-                            )
-                            self.webrtc_component = image
-                            for component in additional_input_components:
-                                if component not in same_components:
-                                    component.render()
-                    if additional_output_components:
-                        with gr.Column():
-                            for component in additional_output_components:
-                                component.render()
+            has_chatbot = False
+            chatbot_component = None
+            for component in additional_input_components + additional_output_components:
+                if component.get_block_name() == "chatbot":
+                    has_chatbot = True
+                    chatbot_component = component
+                    break
 
-                    image.stream(
-                        fn=self.event_handler,
-                        inputs=[image] + additional_input_components,
-                        outputs=[image],
-                        time_limit=self.time_limit,
-                        concurrency_limit=self.concurrency_limit,  # type: ignore
-                        send_input_on=ui_args.get("send_input_on", "change"),
-                    )
-                    if additional_output_components:
-                        assert self.additional_outputs_handler
-                        image.on_additional_outputs(
-                            self.additional_outputs_handler,
-                            inputs=additional_output_components,
-                            outputs=additional_output_components,
-                            concurrency_limit=self.concurrency_limit_gradio,  # type: ignore
-                        )
-        elif self.modality == "audio-video" and self.mode == "send-receive":
-            css = """.my-group {max-width: 600px !important; max-height: 600 !important;}
-            .my-column {display: flex !important; justify-content: center !important; align-items: center !important};"""
+            use_component_layout = ui_args.get("full_screen") is False or has_chatbot
+            if use_component_layout:
+                css = """.my-group {max-width: 600px !important; max-height: 600 !important;}
+                      .my-column {display: flex !important; justify-content: center !important; align-items: center !important};"""
+            else:
+                css = """.gradio-container .sidebar {background-color: rgba(255, 255, 255, 0.5) !important;}
+                body.dark .gradio-container .sidebar {background-color: rgba(32, 32, 32, 0.5) !important;}"""
             with gr.Blocks(css=css) as demo:
-                gr.HTML(
-                    f"""
-                <h1 style='text-align: center'>
-                {ui_args.get("title", "Audio Video Streaming (Powered by FastRTC ⚡️)")}
-                </h1>
-                """
-                )
-                if ui_args.get("subtitle"):
-                    gr.Markdown(
-                        f"""
-                <div style='text-align: center'>
-                {ui_args.get("subtitle")}
-                </div>
-                """
+                if not ui_args.get("hide_title"):
+                    title = ui_args.get(
+                        "title", "Audio Streaming (Powered by FastRTC ⚡️)"
                     )
+                    gr.HTML(self._format_title(title))
+                    if ui_args.get("subtitle"):
+                        gr.Markdown(self._format_subtitle(ui_args.get("subtitle")))
+                if ui_args.get("variant", "") == "textbox":
+                    with gr.Row():
+                        if additional_input_components:
+                            with gr.Column():
+                                for component in additional_input_components:
+                                    component.render()
+                        diff_output_components = [
+                            component
+                            for component in additional_output_components
+                            if component not in same_components
+                        ]
+                        if diff_output_components:
+                            with gr.Column():
+                                for component in diff_output_components:
+                                    component.render()
+                    with gr.Row():
+                        image = WebRTC(
+                            label="Stream",
+                            rtc_configuration=self.rtc_configuration,
+                            track_constraints=self.track_constraints,
+                            mode="send-receive",
+                            modality="audio",
+                            icon=ui_args.get("icon"),
+                            icon_button_color=ui_args.get("icon_button_color"),
+                            pulse_color=ui_args.get("pulse_color"),
+                            icon_radius=ui_args.get("icon_radius"),
+                            variant=ui_args.get("variant", "wave"),
+                            full_screen=not use_component_layout,
+                        )
+                else:
+                    if additional_output_components:
+                        with gr.Row():
+                            with gr.Column():
+                                if chatbot_component:
+                                    chatbot_component.render()
+                                image = WebRTC(
+                                    label="Stream",
+                                    rtc_configuration=self.rtc_configuration,
+                                    track_constraints=self.track_constraints,
+                                    mode="send-receive",
+                                    modality="audio",
+                                    icon=ui_args.get("icon"),
+                                    icon_button_color=ui_args.get("icon_button_color"),
+                                    pulse_color=ui_args.get("pulse_color"),
+                                    icon_radius=ui_args.get("icon_radius"),
+                                    full_screen=not use_component_layout,
+                                )
+                                input_components_to_render = [
+                                    component
+                                    for component in additional_input_components
+                                    if component not in same_components
+                                ]
+                                if input_components_to_render:
+                                    with gr.Sidebar(position="left"):
+                                        for component in input_components_to_render:
+                                            component.render()
+                            if use_component_layout:
+                                if len(additional_output_components) > 1:
+                                    with gr.Column():
+                                        for component in additional_output_components:
+                                            if component.get_block_name() != "chatbot":
+                                                component.render()
+                            else:
+                                with gr.Sidebar(position="right"):
+                                    for component in additional_output_components:
+                                        component.render()
+                    else:
+                        with gr.Row():
+                            with gr.Column():
+                                image = WebRTC(
+                                    label="Stream",
+                                    rtc_configuration=self.rtc_configuration,
+                                    track_constraints=self.track_constraints,
+                                    mode="send-receive",
+                                    modality="audio",
+                                    icon=ui_args.get("icon"),
+                                    icon_button_color=ui_args.get("icon_button_color"),
+                                    pulse_color=ui_args.get("pulse_color"),
+                                    icon_radius=ui_args.get("icon_radius"),
+                                    full_screen=not use_component_layout,
+                                )
+                                input_components_to_render = [
+                                    component
+                                    for component in additional_input_components
+                                    if component not in same_components
+                                ]
+                                if input_components_to_render:
+                                    if use_component_layout:
+                                        for component in input_components_to_render:
+                                            component.render()
+                                    else:
+                                        with gr.Sidebar(position="left"):
+                                            for component in input_components_to_render:
+                                                component.render()
+                self.webrtc_component = image
+                image.stream(
+                    fn=self.event_handler,
+                    inputs=[image] + additional_input_components,
+                    outputs=[image],
+                    time_limit=self.time_limit,
+                    concurrency_limit=self.concurrency_limit,  # type: ignore
+                    send_input_on=ui_args.get("send_input_on", "change"),
+                )
+                if additional_output_components:
+                    assert self.additional_outputs_handler
+                    image.on_additional_outputs(
+                        self.additional_outputs_handler,
+                        inputs=additional_output_components,
+                        outputs=additional_output_components,
+                        concurrency_limit=self.concurrency_limit_gradio,  # type: ignore
+                    )
+        elif self.modality == "audio-video" and self.mode == "send-receive":
+            if ui_args.get("full_screen") is False:
+                css = """.my-group {max-width: 600px !important; max-height: 600 !important;}
+                      .my-column {display: flex !important; justify-content: center !important; align-items: center !important};"""
+            else:
+                css = """.gradio-container .sidebar {background-color: rgba(255, 255, 255, 0.5) !important;}
+                body.dark .gradio-container .sidebar {background-color: rgba(32, 32, 32, 0.5) !important;}"""
+            with gr.Blocks(css=css) as demo:
+                if not ui_args.get("hide_title"):
+                    title = ui_args.get(
+                        "title", "Video Streaming (Powered by FastRTC ⚡️)"
+                    )
+                    gr.HTML(self._format_title(title))
+                    if ui_args.get("subtitle"):
+                        gr.HTML(self._format_subtitle(ui_args.get("subtitle")))
                 with gr.Row():
                     with gr.Column(elem_classes=["my-column"]):
                         with gr.Group(elem_classes=["my-group"]):
@@ -690,15 +818,31 @@ class Stream(WebRTCConnectionMixin):
                                 icon_button_color=ui_args.get("icon_button_color"),
                                 pulse_color=ui_args.get("pulse_color"),
                                 icon_radius=ui_args.get("icon_radius"),
+                                full_screen=ui_args.get("full_screen"),
                             )
                             self.webrtc_component = image
-                            for component in additional_input_components:
-                                if component not in same_components:
-                                    component.render()
+                            input_components_to_render = [
+                                component
+                                for component in additional_input_components
+                                if component not in same_components
+                            ]
+                            if input_components_to_render:
+                                if ui_args.get("full_screen") is False:
+                                    for component in input_components_to_render:
+                                        component.render()
+                                else:
+                                    with gr.Sidebar(position="left"):
+                                        for component in input_components_to_render:
+                                            component.render()
                     if additional_output_components:
-                        with gr.Column():
-                            for component in additional_output_components:
-                                component.render()
+                        if ui_args.get("full_screen") is False:
+                            with gr.Column():
+                                for component in additional_output_components:
+                                    component.render()
+                        else:
+                            with gr.Sidebar(position="right"):
+                                for component in additional_output_components:
+                                    component.render()
 
                     image.stream(
                         fn=self.event_handler,
@@ -783,7 +927,7 @@ class Stream(WebRTCConnectionMixin):
         from twilio.twiml.voice_response import Connect, VoiceResponse
 
         response = VoiceResponse()
-        # response.say("Connecting to the AI assistant.")
+        response.say("Connecting to the AI assistant.")
         connect = Connect()
         path = request.url.path.removesuffix("/telephone/incoming")
         connect.stream(url=f"wss://{request.url.hostname}{path}/telephone/handler")

@@ -2,16 +2,17 @@
   import { createEventDispatcher, onMount } from "svelte";
   import { BlockLabel, Empty } from "@gradio/atoms";
   import { Video } from "@gradio/icons";
-
+  import type { WebRTCValue } from "./utils";
   import { start, stop } from "./webrtc_utils";
 
-  export let value: string | null = null;
+  export let value: string | WebRTCValue | null = null;
   export let label: string | undefined = undefined;
   export let show_label = true;
   export let rtc_configuration: Object | null = null;
   export let on_change_cb: (msg: "change" | "tick") => void;
   export let server: {
     offer: (body: any) => Promise<any>;
+    turn: () => Promise<any>;
   };
 
   let video_element: HTMLVideoElement;
@@ -72,7 +73,7 @@
     const timeoutId = setTimeout(() => {
       // @ts-ignore
       on_change_cb({ type: "connection_timeout" });
-    }, 5000);
+    }, 10000);
 
     start(
       null,

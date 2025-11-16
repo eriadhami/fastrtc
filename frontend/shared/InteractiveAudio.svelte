@@ -3,7 +3,6 @@
   import type { I18nFormatter } from "@gradio/utils";
   import { createEventDispatcher } from "svelte";
   import { onMount } from "svelte";
-  import { fade } from "svelte/transition";
   import { StreamingBar } from "@gradio/statustracker";
   import {
     Circle,
@@ -15,14 +14,17 @@
     Microphone,
   } from "@gradio/icons";
   import MicrophoneMuted from "./MicrophoneMuted.svelte";
+  import type { WebRTCValue } from "./utils";
+  import WebcamPermissions from "./WebcamPermissions.svelte";
+  import { fade } from "svelte/transition";
 
   import { start, stop } from "./webrtc_utils";
   import { get_devices, set_available_devices } from "./stream_utils";
   import AudioWave from "./AudioWave.svelte";
-  import WebcamPermissions from "./WebcamPermissions.svelte";
+  import TextboxWithMic from "./TextboxWithMic.svelte";
   import PulsingIcon from "./PulsingIcon.svelte";
   export let mode: "send-receive" | "send";
-  export let value: string | null = null;
+  export let value: WebRTCValue | null = null;
   export let label: string | undefined = undefined;
   export let show_label = true;
   export let rtc_configuration: Object | null = null;
@@ -37,6 +39,10 @@
   export let pulse_color: string = "var(--color-accent)";
   export let icon_radius: number = 50;
   export let button_labels: { start: string; stop: string; waiting: string };
+  export let variant: "textbox" | "wave" = "wave";
+  export let connection_state: "open" | "closed" | "unset" = "unset";
+  export let full_screen: boolean = true;
+
   let pending = false;
 
   let stopword_recognized = false;
@@ -44,7 +50,7 @@
   let notification_sound;
 
   onMount(() => {
-    if (value === "__webrtc_value__") {
+    if (value?.webrtc_id === "__webrtc_value__") {
       notification_sound = new Audio(
         "https://huggingface.co/datasets/freddyaboulton/bucket/resolve/main/pop-sounds.mp3",
       );
@@ -74,6 +80,8 @@
   export let server: {
     offer: (body: any) => Promise<any>;
     turn: () => Promise<any>;
+    trigger_response: (body: any) => Promise<any>;
+    quit_output_stream: (body: any) => Promise<any>;
   };
 
   let stream_state: "open" | "closed" | "waiting" = "closed";
@@ -86,6 +94,7 @@
   let mic_accessed = false;
   let is_muted = false;
   let is_mic_muted = false;
+  let start_button;
 
   const audio_source_callback = () => {
     if (mode === "send") return stream;
@@ -98,6 +107,8 @@
     error: string;
     play: undefined;
     stop: undefined;
+    start_recording: undefined;
+    stop_recording: undefined;
   }>();
 
   async function access_mic(): Promise<void> {
@@ -141,14 +152,18 @@
 
   async function start_stream(): Promise<void> {
     if (stream_state === "open") {
+      dispatch("stop_recording");
       stop(pc);
       stream_state = "closed";
       _time_limit = null;
       await access_mic();
+      await server.quit_output_stream({ webrtc_id: _webrtc_id });
       return;
     }
+
+    dispatch("start_recording");
     _webrtc_id = Math.random().toString(36).substring(2);
-    value = _webrtc_id;
+    value.webrtc_id = _webrtc_id;
     stream_state = "waiting";
     await server.turn().then((rtc_configuration_) => {
       if (rtc_configuration_.error) {
@@ -214,7 +229,7 @@
     const timeoutId = setTimeout(() => {
       // @ts-ignore
       _on_change_cb({ type: "connection_timeout" });
-    }, 5000);
+    }, 10000);
 
     start(
       stream,
@@ -296,28 +311,76 @@
   $: if (stopword_recognized) {
     notification_sound.play();
   }
+
+  $: if (
+    connection_state === "open" &&
+    mic_accessed &&
+    stream_state === "closed"
+  ) {
+    console.log("opening connection");
+    start_stream();
+    connection_state = "unset";
+  } else if (
+    connection_state === "closed" &&
+    mic_accessed &&
+    stream_state === "open"
+  ) {
+    console.log("closing connection");
+    start_stream();
+    connection_state = "unset";
+  }
+
+  function input_audio_source_callback(): MediaStream {
+    return stream;
+  }
 </script>
 
-<BlockLabel
-  {show_label}
-  Icon={Music}
-  float={false}
-  label={label || i18n("audio.audio")}
-/>
-<div class="audio-container">
+{#if variant !== "textbox"}
+  <BlockLabel
+    show_label={show_label && !full_screen}
+    Icon={Music}
+    float={false}
+    label={label || i18n("audio.audio")}
+  />
+{/if}
+<div
+  class="audio-container"
+  class:full-screen={(full_screen || full_screen === null) &&
+    variant !== "textbox"}
+>
   <audio
     class="standard-player"
-    class:hidden={value === "__webrtc_value__"}
+    class:hidden={true}
     on:load
     bind:this={audio_player}
     on:ended={() => dispatch("stop")}
     on:play={() => dispatch("play")}
+    on:start_recording
+    on:stop_recording
   />
-  {#if !mic_accessed}
+  {#if variant === "textbox"}
+    <TextboxWithMic
+      bind:value
+      bind:stream_state
+      {start_stream}
+      {access_mic}
+      {audio_source_callback}
+      {input_audio_source_callback}
+      {toggleMuteMicrophone}
+      {toggleMute}
+      {on_change_cb}
+      {mode}
+      {icon_button_color}
+      {pulse_color}
+      bind:is_muted
+      bind:is_mic_muted
+      {pending}
+    />
+  {:else if !mic_accessed && !(full_screen || full_screen === null)}
     <div
       in:fade={{ delay: 100, duration: 200 }}
       title="grant webcam access"
-      style="height: 100%"
+      style="height: 100%; background-color: var(--block-background-fill)"
     >
       <WebcamPermissions
         icon={Microphone}
@@ -333,10 +396,19 @@
       {pulse_color}
       {pending}
       {icon_radius}
+      {full_screen}
     />
     <StreamingBar time_limit={_time_limit} />
-    <div class="button-wrap" class:pulse={stopword_recognized}>
-      <button on:click={start_stream} aria-label={"start stream"}>
+    <div
+      class="button-wrap"
+      class:pulse={stopword_recognized}
+      class:full-screen={full_screen || full_screen === null}
+    >
+      <button
+        on:click={start_stream}
+        aria-label={"start stream"}
+        bind:this={start_button}
+      >
         {#if stream_state === "waiting"}
           <div class="icon-with-text">
             <div class="icon color-primary" title="spinner">
@@ -353,11 +425,12 @@
                 style={`fill: ${icon_button_color}; stroke: ${icon_button_color}; color: ${icon_button_color};`}
               >
                 <PulsingIcon
-                  audio_source_callback={() => stream}
+                  audio_source_callback={input_audio_source_callback}
                   stream_state={"open"}
                   icon={Circle}
                   {icon_button_color}
                   {pulse_color}
+                  {full_screen}
                 />
               </div>
             {:else}
@@ -424,16 +497,11 @@
       {#if options_open && selected_device}
         <select
           class="select-wrap"
+          class:full-screen={full_screen || full_screen === null}
           aria-label="select source"
           use:click_outside={handle_click_outside}
           on:change={handle_device_change}
         >
-          <button
-            class="inset-icon"
-            on:click|stopPropagation={() => (options_open = false)}
-          >
-            <DropdownArrow />
-          </button>
           {#if available_audio_devices.length === 0}
             <option value="">{i18n("common.no_devices")}</option>
           {:else}
@@ -461,6 +529,14 @@
     align-items: center;
   }
 
+  .audio-container.full-screen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    width: 100vw;
+  }
+
   :global(::part(wrapper)) {
     margin-bottom: var(--size-2);
   }
@@ -477,7 +553,11 @@
   .button-wrap {
     margin-top: var(--size-2);
     margin-bottom: var(--size-2);
-    background-color: var(--block-background-fill);
+    background-color: color-mix(
+      in srgb,
+      var(--block-background-fill) 50%,
+      transparent
+    );
     border: 1px solid var(--border-color-primary);
     border-radius: var(--radius-xl);
     padding: var(--size-1-5);
@@ -487,6 +567,19 @@
     border-radius: var(--radius-xl);
     line-height: var(--size-3);
     color: var(--button-secondary-text-color);
+  }
+
+  .button-wrap:hover {
+    background-color: var(--block-background-fill);
+  }
+
+  .button-wrap.full-screen {
+    position: relative;
+    padding: var(--size-4);
+    margin-top: var(--size-4);
+    margin-bottom: var(--size-4);
+    font-size: var(--text-lg);
+    min-height: var(--size-12);
   }
 
   @keyframes pulse {
@@ -567,6 +660,18 @@
     left: 50%;
     transform: translate(-50%, 0);
     max-width: var(--size-52);
+  }
+
+  .select-wrap.full-screen {
+    padding: var(--size-4);
+    font-size: var(--text-lg);
+    min-height: var(--size-14);
+    width: 150%;
+    justify-content: center;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
   }
 
   .select-wrap > option {

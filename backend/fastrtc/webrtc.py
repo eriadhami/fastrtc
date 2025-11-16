@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterable, Sequence
+from importlib.metadata import version
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -14,7 +15,6 @@ from typing import (
     cast,
 )
 
-from gradio import wasm_utils
 from gradio.components.base import Component, server
 from gradio_client import handle_file
 
@@ -26,15 +26,18 @@ from .tracks import (
     VideoEventHandler,
     VideoStreamHandler,
 )
-from .utils import RTCConfigurationCallable
+from .utils import RTCConfigurationCallable, WebRTCData, WebRTCModel
 from .webrtc_connection_mixin import WebRTCConnectionMixin
 
 if TYPE_CHECKING:
     from gradio.blocks import Block
     from gradio.components import Timer
 
-if wasm_utils.IS_WASM:
-    raise ValueError("Not supported in gradio-lite!")
+if version("gradio") < "5.46.0":
+    from gradio import wasm_utils  # type: ignore
+
+    if wasm_utils.IS_WASM:
+        raise ValueError("Not supported in gradio-lite!")
 
 
 logger = logging.getLogger(__name__)
@@ -57,7 +60,8 @@ class WebRTC(Component, WebRTCConnectionMixin):
     Demos: video_identity_2
     """
 
-    EVENTS = ["tick", "state_change"]
+    EVENTS = ["tick", "state_change", "submit", "start_recording", "stop_recording"]
+    data_model = WebRTCModel
 
     def __init__(
         self,
@@ -91,6 +95,8 @@ class WebRTC(Component, WebRTCConnectionMixin):
         pulse_color: str | None = None,
         icon_radius: int | None = None,
         button_labels: dict | None = None,
+        variant: Literal["textbox", "wave"] = "wave",
+        full_screen: bool | None = True,
     ):
         """
         Parameters:
@@ -126,8 +132,10 @@ class WebRTC(Component, WebRTCConnectionMixin):
             pulse_color: Color of the pulse animation. Default is var(--color-accent) of the demo theme.
             button_labels: Text to display on the audio or video start, stop, waiting buttons. Dict with keys "start", "stop", "waiting" mapping to the text to display on the buttons.
             icon_radius: Border radius of the icon button expressed as a percentage of the button size. Default is 50%
+            full_screen: If True, the component will be full screen.
         """
         WebRTCConnectionMixin.__init__(self)
+        self.variant = variant
         self.time_limit = time_limit
         self.height = height
         self.width = width
@@ -144,6 +152,15 @@ class WebRTC(Component, WebRTCConnectionMixin):
         self.icon_radius = icon_radius
         self.pulse_color = pulse_color
         self.rtp_params = rtp_params or {}
+        if full_screen is None:
+            full_screen = True
+        self.full_screen = full_screen
+        if full_screen is False:
+            width = 500
+            height = 500
+        else:
+            width = 1280
+            height = 720
         self.button_labels = {
             "start": "",
             "stop": "",
@@ -162,16 +179,16 @@ class WebRTC(Component, WebRTCConnectionMixin):
         if track_constraints is None and modality == "video":
             track_constraints = {
                 "facingMode": "user",
-                "width": {"ideal": 500},
-                "height": {"ideal": 500},
+                "width": {"ideal": width},
+                "height": {"ideal": height},
                 "frameRate": {"ideal": 30},
             }
         if track_constraints is None and modality == "audio-video":
             track_constraints = {
                 "video": {
                     "facingMode": "user",
-                    "width": {"ideal": 500},
-                    "height": {"ideal": 500},
+                    "width": {"ideal": width},
+                    "height": {"ideal": height},
                     "frameRate": {"ideal": 30},
                 },
                 "audio": {
@@ -206,14 +223,21 @@ class WebRTC(Component, WebRTCConnectionMixin):
             icon if not icon else cast(dict, self.serve_static_file(icon)).get("url")
         )
 
-    def preprocess(self, payload: str) -> str:
+    def preprocess(self, payload: WebRTCModel) -> WebRTCData | str:
         """
         Parameters:
             payload: An instance of VideoData containing the video and subtitle files.
         Returns:
             Passes the uploaded video as a `str` filepath or URL whose extension can be modified by `format`.
         """
-        return payload
+        if self.variant == "textbox":
+            return payload.root
+        else:
+            return (
+                payload.root
+                if isinstance(payload.root, str)
+                else payload.root.webrtc_id
+            )
 
     def postprocess(self, value: Any) -> str:
         """
@@ -240,7 +264,9 @@ class WebRTC(Component, WebRTCConnectionMixin):
             inputs = [inputs]
             inputs = list(inputs)
 
-        async def handler(webrtc_id: str, *args):
+        async def handler(webrtc_id: str | WebRTCData, *args):
+            if isinstance(webrtc_id, WebRTCData):
+                webrtc_id = webrtc_id.webrtc_id
             async for next_outputs in self.output_stream(webrtc_id):
                 yield fn(*args, *next_outputs.args)  # type: ignore
 
@@ -291,7 +317,8 @@ class WebRTC(Component, WebRTCConnectionMixin):
         )
         self.event_handler = fn  # type: ignore
         self.time_limit = time_limit
-
+        if self.variant == "textbox":
+            self.event_handler.needs_args = True  # type: ignore
         if (
             self.mode == "send-receive"
             and self.modality in ["audio", "audio-video"]
@@ -317,7 +344,7 @@ class WebRTC(Component, WebRTCConnectionMixin):
             for input_component in inputs[1:]:  # type: ignore
                 if hasattr(input_component, "change") and send_input_on == "change":
                     input_component.change(  # type: ignore
-                        self.set_input,
+                        self.set_input_gradio,
                         inputs=inputs,
                         outputs=None,
                         concurrency_id=concurrency_id,
@@ -327,13 +354,19 @@ class WebRTC(Component, WebRTCConnectionMixin):
                     )
                 if hasattr(input_component, "submit") and send_input_on == "submit":
                     input_component.submit(  # type: ignore
-                        self.set_input,
+                        self.set_input_gradio,
                         inputs=inputs,
                         outputs=None,
                         concurrency_id=concurrency_id,
                     )
+            self.submit(  # type: ignore
+                self.set_input_on_submit,
+                inputs=inputs,
+                outputs=None,
+                concurrency_id=concurrency_id,
+            )
             return self.tick(  # type: ignore
-                self.set_input,
+                self.set_input_gradio,
                 inputs=inputs,
                 outputs=None,
                 concurrency_id=concurrency_id,
@@ -359,7 +392,7 @@ class WebRTC(Component, WebRTCConnectionMixin):
                 )
             trigger(lambda: "start_webrtc_stream", inputs=None, outputs=self)
             self.tick(  # type: ignore
-                self.set_input,
+                self.set_input_gradio,
                 inputs=[self] + list(inputs),
                 outputs=None,
                 concurrency_id=concurrency_id,
@@ -377,6 +410,12 @@ class WebRTC(Component, WebRTCConnectionMixin):
         return await self.handle_offer(
             body, self.set_additional_outputs(body["webrtc_id"])
         )
+
+    @server
+    async def quit_output_stream(self, body):
+        if body["webrtc_id"] in self.additional_outputs:
+            self.additional_outputs[body["webrtc_id"]].quit.set()
+        return {"success": True}
 
     def example_payload(self) -> Any:
         return {
