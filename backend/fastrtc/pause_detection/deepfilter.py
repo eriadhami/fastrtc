@@ -44,6 +44,26 @@ class DeepFilter2Processor:
             return
 
         try:
+            # First, ensure torch and torchaudio are properly loaded
+            # This fixes "No module named 'torchaudio.backend'" error
+            import torch
+            import torchaudio
+            
+            # Initialize torchaudio backend (required for deepfilternet)
+            try:
+                # Try to get the audio backend to ensure it's initialized
+                backend = torchaudio.get_audio_backend()
+                logger.info(f"torchaudio backend: {backend}")
+            except Exception as backend_err:
+                # If backend detection fails, try to set soundfile as default
+                logger.warning(f"Could not detect torchaudio backend: {backend_err}")
+                try:
+                    torchaudio.set_audio_backend("soundfile")
+                    logger.info("Set torchaudio backend to soundfile")
+                except Exception:
+                    pass  # Continue anyway, deepfilternet might work without explicit backend
+            
+            # Now import DeepFilter2 components
             from df.enhance import enhance, init_df
 
             self.enhance = enhance
