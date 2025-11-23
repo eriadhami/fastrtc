@@ -51,12 +51,27 @@ class DeepFilter2Processor:
             
             # WORKAROUND: deepfilternet 0.5.6 tries to import torchaudio.backend
             # which doesn't exist in torchaudio 2.x
-            # Create a minimal fake module to satisfy the import
-            if not hasattr(torchaudio, 'backend'):
+            # Create a minimal fake package to satisfy the import
+            if 'torchaudio.backend' not in sys.modules:
                 from types import ModuleType
+                
+                # Create main backend module as a package
                 backend_module = ModuleType('torchaudio.backend')
-                backend_module.soundfile_backend = None  # Placeholder
+                backend_module.__package__ = 'torchaudio.backend'
+                backend_module.__path__ = []  # Makes it a package
                 sys.modules['torchaudio.backend'] = backend_module
+                
+                # Create common submodule that deepfilternet expects
+                common_module = ModuleType('torchaudio.backend.common')
+                common_module.__package__ = 'torchaudio.backend'
+                sys.modules['torchaudio.backend.common'] = common_module
+                
+                # Create soundfile_backend submodule
+                soundfile_module = ModuleType('torchaudio.backend.soundfile_backend')
+                soundfile_module.__package__ = 'torchaudio.backend'
+                sys.modules['torchaudio.backend.soundfile_backend'] = soundfile_module
+                
+                # Attach to torchaudio
                 torchaudio.backend = backend_module
                 logger.info("Created torchaudio.backend compatibility shim for deepfilternet")
             
