@@ -16,12 +16,11 @@ class DeepFilterOptions:
     Attributes:
         enabled: Whether to enable DeepFilter2 preprocessing.
         attenuation_limit: Maximum attenuation in dB. Higher values = more aggressive noise reduction.
-        post_filter_beta: Post-filter strength (0-1). Higher values = more noise reduction.
+            Typical values: 6-100. Default: 100 (very aggressive noise suppression).
     """
 
     enabled: bool = True
     attenuation_limit: float = 100.0
-    post_filter_beta: float = 0.02
 
 
 class DeepFilter2Processor:
@@ -238,12 +237,13 @@ class DeepFilter2Processor:
                 needs_resample_back = False
 
             # Process with DeepFilter2
+            # Note: deepfilternet 0.5.6 enhance() accepts: model, df_state, audio, atten_lim_db
+            # post_filter_beta is not a valid parameter in this version
             enhanced = self.enhance(
                 self.model,
                 self.df_state,
                 audio_input,
                 atten_lim_db=self.options.attenuation_limit,
-                post_filter_beta=self.options.post_filter_beta,
             )
 
             # Resample back to original rate if needed
@@ -296,14 +296,12 @@ class DeepFilter2Processor:
 def get_deepfilter_processor(
     enabled: bool = True,
     attenuation_limit: float = 100.0,
-    post_filter_beta: float = 0.02,
 ) -> DeepFilter2Processor:
     """Get or create a cached DeepFilter2 processor instance.
 
     Args:
         enabled: Whether to enable DeepFilter2 preprocessing.
-        attenuation_limit: Maximum attenuation in dB.
-        post_filter_beta: Post-filter strength (0-1).
+        attenuation_limit: Maximum attenuation in dB (range: 0-100, default 100).
 
     Returns:
         DeepFilter2Processor instance.
@@ -311,6 +309,5 @@ def get_deepfilter_processor(
     options = DeepFilterOptions(
         enabled=enabled,
         attenuation_limit=attenuation_limit,
-        post_filter_beta=post_filter_beta,
     )
     return DeepFilter2Processor(options)
