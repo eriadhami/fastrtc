@@ -48,10 +48,34 @@ class DeepFilter2Processor:
 
             self.enhance = enhance
             self.init_df = init_df
+            logger.info("Successfully imported DeepFilter2 (df.enhance)")
         except ImportError as e:
+            # Provide detailed diagnostic information
+            import sys
+            import importlib.util
+            
+            # Check if deepfilternet package is installed
+            df_spec = importlib.util.find_spec("deepfilternet")
+            dflib_spec = importlib.util.find_spec("deepfilterlib")
+            df_module_spec = importlib.util.find_spec("df")
+            
+            diagnostic_info = []
+            diagnostic_info.append(f"Python version: {sys.version}")
+            diagnostic_info.append(f"deepfilternet package found: {df_spec is not None}")
+            diagnostic_info.append(f"deepfilterlib package found: {dflib_spec is not None}")
+            diagnostic_info.append(f"df module found: {df_module_spec is not None}")
+            
+            if df_spec:
+                diagnostic_info.append(f"deepfilternet location: {df_spec.origin if df_spec.origin else 'unknown'}")
+            if df_module_spec:
+                diagnostic_info.append(f"df module location: {df_module_spec.origin if df_module_spec.origin else 'unknown'}")
+            
+            logger.warning("\n".join(diagnostic_info))
+            
             raise RuntimeError(
                 "Install deepfilternet to use DeepFilter2 preprocessing. "
-                "Run: pip install deepfilternet"
+                "Run: pip install deepfilternet\n"
+                f"Import error: {str(e)}"
             ) from e
 
         try:
