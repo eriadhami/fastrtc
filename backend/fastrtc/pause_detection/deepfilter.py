@@ -45,23 +45,27 @@ class DeepFilter2Processor:
 
         try:
             # First, ensure torch and torchaudio are properly loaded
-            # This fixes "No module named 'torchaudio.backend'" error
             import torch
             import torchaudio
+            import sys
             
-            # Initialize torchaudio backend (required for deepfilternet)
+            # WORKAROUND: deepfilternet 0.5.6 tries to import torchaudio.backend
+            # which doesn't exist in torchaudio 2.x
+            # Create a minimal fake module to satisfy the import
+            if not hasattr(torchaudio, 'backend'):
+                from types import ModuleType
+                backend_module = ModuleType('torchaudio.backend')
+                backend_module.soundfile_backend = None  # Placeholder
+                sys.modules['torchaudio.backend'] = backend_module
+                torchaudio.backend = backend_module
+                logger.info("Created torchaudio.backend compatibility shim for deepfilternet")
+            
+            # Ensure soundfile is available for audio I/O
             try:
-                # Try to get the audio backend to ensure it's initialized
-                backend = torchaudio.get_audio_backend()
-                logger.info(f"torchaudio backend: {backend}")
-            except Exception as backend_err:
-                # If backend detection fails, try to set soundfile as default
-                logger.warning(f"Could not detect torchaudio backend: {backend_err}")
-                try:
-                    torchaudio.set_audio_backend("soundfile")
-                    logger.info("Set torchaudio backend to soundfile")
-                except Exception:
-                    pass  # Continue anyway, deepfilternet might work without explicit backend
+                import soundfile
+                logger.info(f"soundfile available: {soundfile.__version__}")
+            except ImportError:
+                logger.warning("soundfile not available")
             
             # Now import DeepFilter2 components
             from df.enhance import enhance, init_df
