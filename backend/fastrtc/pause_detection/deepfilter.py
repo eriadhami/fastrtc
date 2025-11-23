@@ -236,15 +236,22 @@ class DeepFilter2Processor:
             else:
                 needs_resample_back = False
 
+            # Convert numpy array to torch tensor for DeepFilter2
+            import torch
+            audio_tensor = torch.from_numpy(audio_input)
+
             # Process with DeepFilter2
             # Note: deepfilternet 0.5.6 enhance() accepts: model, df_state, audio, atten_lim_db
-            # post_filter_beta is not a valid parameter in this version
-            enhanced = self.enhance(
+            # Audio must be a torch.Tensor, not numpy array
+            enhanced_tensor = self.enhance(
                 self.model,
                 self.df_state,
-                audio_input,
+                audio_tensor,
                 atten_lim_db=self.options.attenuation_limit,
             )
+
+            # Convert back to numpy
+            enhanced = enhanced_tensor.cpu().numpy()
 
             # Resample back to original rate if needed
             if needs_resample_back:
