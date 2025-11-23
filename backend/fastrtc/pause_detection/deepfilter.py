@@ -53,6 +53,7 @@ class DeepFilter2Processor:
             # Provide detailed diagnostic information
             import sys
             import importlib.util
+            import subprocess
             
             # Check if deepfilternet package is installed
             df_spec = importlib.util.find_spec("deepfilternet")
@@ -69,6 +70,21 @@ class DeepFilter2Processor:
                 diagnostic_info.append(f"deepfilternet location: {df_spec.origin if df_spec.origin else 'unknown'}")
             if df_module_spec:
                 diagnostic_info.append(f"df module location: {df_module_spec.origin if df_module_spec.origin else 'unknown'}")
+            
+            # Try to get pip list info for deepfilternet
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "list", "--format=freeze"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                installed_packages = result.stdout
+                deepfilter_lines = [line for line in installed_packages.split('\n') if 'deepfilter' in line.lower() or 'torch' in line.lower()]
+                if deepfilter_lines:
+                    diagnostic_info.append(f"Installed packages (deepfilter/torch): {', '.join(deepfilter_lines)}")
+            except Exception:
+                pass
             
             logger.warning("\n".join(diagnostic_info))
             
