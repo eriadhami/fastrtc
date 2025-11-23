@@ -34,7 +34,7 @@ class DeepFilter2Processor:
             options: DeepFilter2 configuration options.
 
         Raises:
-            RuntimeError: If DeepFilter2 is not installed.
+            RuntimeError: If DeepFilter2 is not installed or fails to initialize.
         """
         self.options = options or DeepFilterOptions()
         
@@ -54,9 +54,22 @@ class DeepFilter2Processor:
                 "Run: pip install deepfilternet"
             ) from e
 
-        # Initialize model
-        self.model, self.df_state, _ = self.init_df()
-        logger.info("DeepFilter2 model initialized")
+        try:
+            # Initialize model
+            # DeepFilter2 downloads models to cache on first run
+            # Set cache directory to a writable location if needed
+            import os
+            if "HF_HOME" in os.environ:
+                # On HuggingFace Spaces, ensure cache is in a writable location
+                logger.info(f"Using HF_HOME for DeepFilter2 cache: {os.environ['HF_HOME']}")
+            
+            self.model, self.df_state, _ = self.init_df()
+            logger.info("DeepFilter2 model initialized successfully")
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to initialize DeepFilter2 model: {e}. "
+                "This may be due to missing model files or incompatible dependencies."
+            ) from e
 
     def process(
         self,
@@ -158,6 +171,18 @@ class DeepFilter2Processor:
             logger.error(f"Error processing audio with DeepFilter2: {e}")
             # Return original audio on error
             return audio
+
+    def warmup(self):
+        """Warm up the DeepFilter2 model with dummy audio."""
+        if not self.options.enabled or self.model is None:
+            return
+        
+        logger.info("Warming up DeepFilter2 model...")
+        # Process a few dummy audio chunks to warm up the model
+        for _ in range(3):
+            dummy_audio = np.zeros(48000, dtype=np.float32)  # 1 second at 48kHz
+            self.process(dummy_audio, 48000)
+        logger.info("DeepFilter2 model warmed up")
 
 
 @lru_cache(maxsize=1)

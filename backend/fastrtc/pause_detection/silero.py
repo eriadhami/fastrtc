@@ -139,9 +139,18 @@ class SileroVADModel:
                 if deepfilter_options is None:
                     deepfilter_options = DeepFilterOptions(enabled=True)
                 self.deepfilter_processor = DeepFilter2Processor(deepfilter_options)
+                print(click.style("INFO", fg="green") + ":\t  Warming up DeepFilter2 model.")
+                self.deepfilter_processor.warmup()
+                print(click.style("INFO", fg="green") + ":\t  DeepFilter2 model warmed up.")
                 logger.info("DeepFilter2 preprocessing enabled for VAD")
+            except RuntimeError as e:
+                # Expected error when deepfilternet is not installed
+                print(click.style("WARNING", fg="yellow") + f":\t  {e}")
+                self.deepfilter_processor = None
             except Exception as e:
-                logger.warning(f"Failed to initialize DeepFilter2: {e}")
+                # Unexpected errors
+                print(click.style("ERROR", fg="red") + f":\t  Unexpected error initializing DeepFilter2: {e}")
+                logger.exception("Failed to initialize DeepFilter2")
                 self.deepfilter_processor = None
 
     def get_initial_state(self, batch_size: int):
