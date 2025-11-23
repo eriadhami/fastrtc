@@ -160,7 +160,7 @@ class DeepFilter2Processor:
                 f"Import error: {str(e)}"
             ) from e
 
-        try:
+        try:            
             # Initialize model
             # DeepFilter2 downloads models to cache on first run
             # Set cache directory to a writable location if needed
