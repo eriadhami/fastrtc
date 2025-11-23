@@ -38,7 +38,6 @@ dependencies = [
   "numba>=0.60.0",
   "standard-aifc;python_version>='3.13'",
   "standard-sunau;python_version>='3.13'",
-  "deepfilternet",
 ] # Add dependencies here
 classifiers = [
   'Development Status :: 3 - Alpha',
@@ -73,7 +72,7 @@ Documentation = "https://fastrtc.org/"
 [project.optional-dependencies]
 dev = ["build", "twine", "httpx", "pytest", "pytest-asyncio"]
 vad = ["onnxruntime>=1.20.1"]
-deepfilter = ["deepfilternet"]
+deepfilter = ["deepfilternet>=0.5.6", "torch>=2.0.0", "torchaudio>=2.0.0"]
 tts = ["kokoro-onnx"]
 stopword = ["fastrtc-moonshine-onnx", "onnxruntime>=1.20.1"]
 stt = ["fastrtc-moonshine-onnx", "onnxruntime>=1.20.1"]
