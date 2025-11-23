@@ -54,6 +54,7 @@ class DeepFilter2Processor:
             # Create a minimal fake package to satisfy the import
             if 'torchaudio.backend' not in sys.modules:
                 from types import ModuleType
+                from typing import Optional, Tuple
                 
                 # Create main backend module as a package
                 backend_module = ModuleType('torchaudio.backend')
@@ -61,14 +62,41 @@ class DeepFilter2Processor:
                 backend_module.__path__ = []  # Makes it a package
                 sys.modules['torchaudio.backend'] = backend_module
                 
-                # Create common submodule that deepfilternet expects
+                # Create common submodule with required classes
                 common_module = ModuleType('torchaudio.backend.common')
                 common_module.__package__ = 'torchaudio.backend'
+                
+                # Add AudioMetaData class that deepfilternet expects
+                class AudioMetaData:
+                    """Minimal AudioMetaData for torchaudio backend compatibility."""
+                    def __init__(self, sample_rate: int, num_frames: int, num_channels: int):
+                        self.sample_rate = sample_rate
+                        self.num_frames = num_frames
+                        self.num_channels = num_channels
+                
+                common_module.AudioMetaData = AudioMetaData
                 sys.modules['torchaudio.backend.common'] = common_module
                 
-                # Create soundfile_backend submodule
+                # Create soundfile_backend submodule with required functions
                 soundfile_module = ModuleType('torchaudio.backend.soundfile_backend')
                 soundfile_module.__package__ = 'torchaudio.backend'
+                
+                # Add stub functions that deepfilternet might call
+                def load(filepath: str, frame_offset: int = 0, num_frames: int = -1, 
+                        normalize: bool = True, channels_first: bool = True):
+                    """Stub load function - delegates to torchaudio.load."""
+                    import torchaudio as ta
+                    return ta.load(filepath, frame_offset=frame_offset, num_frames=num_frames, 
+                                  normalize=normalize, channels_first=channels_first)
+                
+                def info(filepath: str) -> AudioMetaData:
+                    """Stub info function - delegates to torchaudio.info."""
+                    import torchaudio as ta
+                    meta = ta.info(filepath)
+                    return AudioMetaData(meta.sample_rate, meta.num_frames, meta.num_channels)
+                
+                soundfile_module.load = load
+                soundfile_module.info = info
                 sys.modules['torchaudio.backend.soundfile_backend'] = soundfile_module
                 
                 # Attach to torchaudio
