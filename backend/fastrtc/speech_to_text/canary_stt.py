@@ -1,11 +1,16 @@
+from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
+import click
 import librosa
 import numpy as np
 from numpy.typing import NDArray
 
 from ..utils import audio_to_float32
 from .stt_ import STTModel
+
+curr_dir = Path(__file__).parent
 
 # All languages supported by canary-1b-v2
 CANARY_SUPPORTED_LANGUAGES = (
@@ -127,3 +132,19 @@ class CanarySTT(STTModel):
         finally:
             import os
             os.unlink(tmp_path)
+
+
+@lru_cache
+def get_canary_model(
+    model_name: str = "nvidia/canary-1b-v2",
+    source_lang: CanaryLanguage = "en",
+    target_lang: CanaryLanguage = "en",
+) -> CanarySTT:
+    m = CanarySTT(model_name=model_name, source_lang=source_lang, target_lang=target_lang)
+    from moonshine_onnx import load_audio
+
+    audio = load_audio(str(curr_dir / "test_file.wav"))
+    print(click.style("INFO", fg="green") + ":\t  Warming up Canary STT model.")
+    m.stt((16000, audio))
+    print(click.style("INFO", fg="green") + ":\t  Canary STT model warmed up.")
+    return m
