@@ -141,9 +141,11 @@ def get_canary_model(
     target_lang: CanaryLanguage = "en",
 ) -> CanarySTT:
     m = CanarySTT(model_name=model_name, source_lang=source_lang, target_lang=target_lang)
-    from moonshine_onnx import load_audio
+    import soundfile as sf
 
-    audio = load_audio(str(curr_dir / "test_file.wav"))
+    audio, sr = sf.read(str(curr_dir / "test_file.wav"), dtype="float32")
+    if sr != 16000:
+        audio = librosa.resample(audio, orig_sr=sr, target_sr=16000)
     print(click.style("INFO", fg="green") + ":\t  Warming up Canary STT model.")
     m.stt((16000, audio))
     print(click.style("INFO", fg="green") + ":\t  Canary STT model warmed up.")
