@@ -75,6 +75,8 @@ vad = ["onnxruntime>=1.20.1"]
 smart-turn = ["onnxruntime>=1.20.1", "transformers>=4.36.0", "huggingface_hub"]
 deepfilter = ["deepfilternet>=0.5.6", "torch>=2.0.0", "torchaudio>=2.0.0"]
 tts = ["kokoro-onnx"]
+canary = ["nemo_toolkit[asr]", "soundfile"]
+magpie = ["nemo_toolkit[tts]", "kaldialign"]
 stopword = ["fastrtc-moonshine-onnx", "onnxruntime>=1.20.1"]
 stt = ["fastrtc-moonshine-onnx", "onnxruntime>=1.20.1"]
 
