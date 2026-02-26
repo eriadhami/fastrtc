@@ -28,7 +28,7 @@ from .pause_detection import (
 from .reply_on_pause import AlgoOptions, ReplyOnPause
 from .reply_on_smart_turn import ReplyOnSmartTurn
 from .reply_on_stopwords import ReplyOnStopWords
-from .speech_to_text import MoonshineSTT, get_stt_model
+from .speech_to_text import CanarySTT, MoonshineSTT, get_stt_model
 from .stream import Stream, UIArgs
 from .text_to_speech import (
     CartesiaTTSOptions,
@@ -83,6 +83,7 @@ __all__ = [
     "ReplyOnSmartTurn",
     "ReplyOnStopWords",
     "SileroVadOptions",
+    "CanarySTT",
     "get_stt_model",
     "MoonshineSTT",
     "StreamHandler",

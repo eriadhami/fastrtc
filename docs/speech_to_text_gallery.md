@@ -22,6 +22,7 @@ A collection of Speech-to-Text models ready to use with FastRTC. Click on the ta
 
 <div class="tag-buttons">
   <button class="tag-button" data-tag="pytorch"><code>pytorch</code></button>
+  <button class="tag-button" data-tag="nemo"><code>nemo</code></button>
 </div>
 
 <script>
@@ -46,6 +47,29 @@ document.querySelectorAll('.tag-button').forEach(button => {
 
 
 <div class="grid cards" markdown>
+
+-   :speaking_head:{ .lg .middle }:eyes:{ .lg .middle } Canary-1B-v2 (NVIDIA NeMo)
+{: data-tags="nemo,pytorch"}
+
+    ---
+
+    Description:
+    [Canary-1B-v2](https://huggingface.co/nvidia/canary-1b-v2) is NVIDIA's 1-billion parameter encoder-decoder model for high-quality speech transcription (ASR) and translation (AST) across 25 European languages. Built-in to FastRTC.
+
+    Install Instructions
+    ```python
+    pip install nemo_toolkit[asr]
+    ```
+
+    Usage
+    ```python
+    from fastrtc import CanarySTT
+
+    model = CanarySTT(source_lang="en", target_lang="en")
+    text = model.stt((16000, audio_array))
+    ```
+
+    [:octicons-arrow-right-24: Model Card](https://huggingface.co/nvidia/canary-1b-v2)
 
 -   :speaking_head:{ .lg .middle }:eyes:{ .lg .middle } distil-whisper-FastRTC
 {: data-tags="pytorch"}
