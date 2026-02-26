@@ -72,6 +72,7 @@ Documentation = "https://fastrtc.org/"
 [project.optional-dependencies]
 dev = ["build", "twine", "httpx", "pytest", "pytest-asyncio"]
 vad = ["onnxruntime>=1.20.1"]
+smart-turn = ["onnxruntime>=1.20.1", "transformers>=4.36.0", "huggingface_hub"]
 deepfilter = ["deepfilternet>=0.5.6", "torch>=2.0.0", "torchaudio>=2.0.0"]
 tts = ["kokoro-onnx"]
 stopword = ["fastrtc-moonshine-onnx", "onnxruntime>=1.20.1"]

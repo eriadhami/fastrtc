@@ -1,5 +1,6 @@
 import asyncio
 import inspect
+import time
 from collections.abc import AsyncGenerator, Callable, Generator
 from dataclasses import dataclass, field
 from logging import getLogger
@@ -13,6 +14,7 @@ from .pause_detection import (
     DeepFilterOptions,
     ModelOptions,
     PauseDetectionModel,
+    RMSGateOptions,
     get_silero_model,
 )
 from .tracks import EmitType, StreamHandler
@@ -131,6 +133,8 @@ class ReplyOnPause(StreamHandler):
         needs_args: bool = False,
         enable_deepfilter: bool = False,
         deepfilter_options: DeepFilterOptions | None = None,
+        enable_rms_gate: bool = False,
+        rms_gate_options: RMSGateOptions | None = None,
     ):
         """
         Initializes the ReplyOnPause handler.
@@ -151,6 +155,8 @@ class ReplyOnPause(StreamHandler):
             needs_args: Whether the reply function expects additional arguments.
             enable_deepfilter: Whether to enable DeepFilter2 preprocessing before VAD.
             deepfilter_options: Configuration options for DeepFilter2.
+            enable_rms_gate: Whether to enable RMS amplitude gating before VAD.
+            rms_gate_options: Configuration options for the RMS gate.
         """
         super().__init__(
             expected_layout,
@@ -163,6 +169,8 @@ class ReplyOnPause(StreamHandler):
         self.model = model or get_silero_model(
             enable_deepfilter=enable_deepfilter,
             deepfilter_options=deepfilter_options,
+            enable_rms_gate=enable_rms_gate,
+            rms_gate_options=rms_gate_options,
         )
         self.fn = fn
         self.is_async = inspect.isasyncgenfunction(fn)
@@ -177,6 +185,11 @@ class ReplyOnPause(StreamHandler):
         self.needs_args = needs_args
         self.enable_deepfilter = enable_deepfilter
         self.deepfilter_options = deepfilter_options
+        self.enable_rms_gate = enable_rms_gate
+        self.rms_gate_options = rms_gate_options
+        # Staleness tracking: timestamps for detecting stale pauses
+        self._pause_detected_at: float = 0.0
+        self._speech_started_at: float = 0.0
 
     @property
     def _needs_additional_inputs(self) -> bool:
@@ -215,6 +228,8 @@ class ReplyOnPause(StreamHandler):
             self.needs_args,
             self.enable_deepfilter,
             self.deepfilter_options,
+            self.enable_rms_gate,
+            self.rms_gate_options,
         )
 
     def determine_pause(
@@ -246,6 +261,7 @@ class ReplyOnPause(StreamHandler):
                 and not state.started_talking
             ):
                 state.started_talking = True
+                self._speech_started_at = time.monotonic()
                 logger.debug("Started talking")
                 self.send_message_sync(create_message("log", "started_talking"))
             if state.started_talking:
@@ -305,6 +321,7 @@ class ReplyOnPause(StreamHandler):
             return
         self.process_audio(frame, self.state)
         if self.state.pause_detected:
+            self._pause_detected_at = time.monotonic()
             self.event.set()
             if self.can_interrupt and self.state.responding:
                 self._close_generator()
@@ -351,6 +368,8 @@ class ReplyOnPause(StreamHandler):
         self.generator = None
         self.event.clear()
         self.state = AppState()
+        self._pause_detected_at = 0.0
+        self._speech_started_at = 0.0
 
     def trigger_response(self):
         """
@@ -388,6 +407,18 @@ class ReplyOnPause(StreamHandler):
             return None
         else:
             if not self.generator:
+                # Staleness check: if newer speech started after the pause was
+                # detected, this pause is stale — the user started a new
+                # utterance. Abort to avoid processing outdated audio.
+                if self._speech_started_at > self._pause_detected_at:
+                    logger.debug(
+                        "Staleness check: newer speech (%.3f) arrived after pause (%.3f), aborting stale response",
+                        self._speech_started_at,
+                        self._pause_detected_at,
+                    )
+                    self.state = self.state.new()
+                    self.event.clear()
+                    return None
                 self.send_message_sync(create_message("log", "pause_detected"))
                 if self._needs_additional_inputs and not self.phone_mode:
                     self.wait_for_args_sync()

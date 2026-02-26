@@ -12,11 +12,21 @@ from .pause_detection import (
     DeepFilterOptions,
     ModelOptions,
     PauseDetectionModel,
+    FilteringMode,
+    MediaDetectionOptions,
+    MediaDetector,
+    RMSAmplitudeGate,
+    RMSGateOptions,
     SileroVadOptions,
+    SmartTurnAnalyzer,
+    SmartTurnOptions,
+    SmartTurnResult,
+    TurnState,
     get_deepfilter_processor,
     get_silero_model,
 )
 from .reply_on_pause import AlgoOptions, ReplyOnPause
+from .reply_on_smart_turn import ReplyOnSmartTurn
 from .reply_on_stopwords import ReplyOnStopWords
 from .speech_to_text import MoonshineSTT, get_stt_model
 from .stream import Stream, UIArgs
@@ -70,6 +80,7 @@ __all__ = [
     "get_twilio_turn_credentials",
     "get_turn_credentials",
     "ReplyOnPause",
+    "ReplyOnSmartTurn",
     "ReplyOnStopWords",
     "SileroVadOptions",
     "get_stt_model",
@@ -100,4 +111,13 @@ __all__ = [
     "DeepFilter2Processor",
     "DeepFilterOptions",
     "get_deepfilter_processor",
+    "FilteringMode",
+    "MediaDetectionOptions",
+    "MediaDetector",
+    "RMSAmplitudeGate",
+    "RMSGateOptions",
+    "SmartTurnAnalyzer",
+    "SmartTurnOptions",
+    "SmartTurnResult",
+    "TurnState",
 ]

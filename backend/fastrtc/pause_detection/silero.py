@@ -12,6 +12,7 @@ from numpy.typing import NDArray
 from ..utils import AudioChunk, audio_to_float32
 from .deepfilter import DeepFilter2Processor, DeepFilterOptions
 from .protocol import PauseDetectionModel
+from .rms_gate import RMSAmplitudeGate, RMSGateOptions
 
 logger = logging.getLogger(__name__)
 
@@ -19,22 +20,26 @@ logger = logging.getLogger(__name__)
 # The code below is adapted from https://github.com/gpt-omni/mini-omni/blob/main/utils/vad.py
 
 
-# Cache for model instances without DeepFilter options
-_model_cache: dict[bool, PauseDetectionModel] = {}
+# Cache for model instances keyed by (enable_deepfilter, enable_rms_gate)
+_model_cache: dict[tuple[bool, bool], PauseDetectionModel] = {}
 
 
 def get_silero_model(
     enable_deepfilter: bool = False,
     deepfilter_options: Optional[DeepFilterOptions] = None,
+    enable_rms_gate: bool = False,
+    rms_gate_options: Optional[RMSGateOptions] = None,
 ) -> PauseDetectionModel:
     """Returns the VAD model instance and warms it up with dummy data.
 
     Args:
         enable_deepfilter: Whether to enable DeepFilter2 preprocessing.
         deepfilter_options: Configuration options for DeepFilter2.
+        enable_rms_gate: Whether to enable RMS amplitude gating before VAD.
+        rms_gate_options: Configuration options for the RMS gate.
 
     Returns:
-        PauseDetectionModel instance with optional DeepFilter2 preprocessing.
+        PauseDetectionModel instance with optional preprocessing.
     """
     try:
         import importlib.util
@@ -46,20 +51,23 @@ def get_silero_model(
         raise RuntimeError("Install fastrtc[vad] to use ReplyOnPause")
     
     # Use simple caching for models without custom options
-    if deepfilter_options is None and enable_deepfilter in _model_cache:
-        return _model_cache[enable_deepfilter]
+    cache_key = (enable_deepfilter, enable_rms_gate)
+    if deepfilter_options is None and rms_gate_options is None and cache_key in _model_cache:
+        return _model_cache[cache_key]
     
     model = SileroVADModel(
         deepfilter_options=deepfilter_options,
         enable_deepfilter=enable_deepfilter,
+        enable_rms_gate=enable_rms_gate,
+        rms_gate_options=rms_gate_options,
     )
     print(click.style("INFO", fg="green") + ":\t  Warming up VAD model.")
     model.warmup()
     print(click.style("INFO", fg="green") + ":\t  VAD model warmed up.")
     
     # Cache if using default options
-    if deepfilter_options is None:
-        _model_cache[enable_deepfilter] = model
+    if deepfilter_options is None and rms_gate_options is None:
+        _model_cache[cache_key] = model
     
     return model
 
@@ -105,12 +113,16 @@ class SileroVADModel:
         self,
         deepfilter_options: Optional[DeepFilterOptions] = None,
         enable_deepfilter: bool = False,
+        enable_rms_gate: bool = False,
+        rms_gate_options: Optional[RMSGateOptions] = None,
     ):
-        """Initialize SileroVADModel with optional DeepFilter2 preprocessing.
+        """Initialize SileroVADModel with optional preprocessing.
 
         Args:
             deepfilter_options: Configuration options for DeepFilter2.
             enable_deepfilter: Whether to enable DeepFilter2 preprocessing.
+            enable_rms_gate: Whether to enable RMS amplitude gating before VAD.
+            rms_gate_options: Configuration options for the RMS gate.
         """
         try:
             import onnxruntime
@@ -152,6 +164,21 @@ class SileroVADModel:
                 print(click.style("ERROR", fg="red") + f":\t  Unexpected error initializing DeepFilter2: {e}")
                 logger.exception("Failed to initialize DeepFilter2")
                 self.deepfilter_processor = None
+
+        # Initialize RMS amplitude gate if enabled
+        self.rms_gate: Optional[RMSAmplitudeGate] = None
+        if enable_rms_gate:
+            if rms_gate_options is None:
+                rms_gate_options = RMSGateOptions(enabled=True)
+            self.rms_gate = RMSAmplitudeGate(rms_gate_options)
+            print(click.style("INFO", fg="green") + ":\t  RMS amplitude gate enabled.")
+            logger.info(
+                "RMS gate enabled: window=%.1fs, percentile=%.0f, ratio=%.2f, grace=%.2fs",
+                rms_gate_options.window_duration_s,
+                rms_gate_options.percentile,
+                rms_gate_options.gate_ratio,
+                rms_gate_options.grace_period_s,
+            )
 
     def get_initial_state(self, batch_size: int):
         h = np.zeros((2, batch_size, 64), dtype=np.float32)
@@ -339,7 +366,25 @@ class SileroVADModel:
                 logger.debug("Applying DeepFilter2 preprocessing")
                 audio_ = self.deepfilter_processor.process(audio_, sampling_rate)
                 logger.debug("DeepFilter2 preprocessing complete")
-            
+
+            # Apply RMS amplitude gate (fast silence rejection)
+            if self.rms_gate is not None:
+                should_pass, rms, threshold = self.rms_gate.process(
+                    audio_, sampling_rate
+                )
+                if not should_pass:
+                    logger.debug(
+                        "RMS gate rejected chunk: rms=%.6f threshold=%.6f",
+                        rms,
+                        threshold,
+                    )
+                    return 0.0, []
+                logger.debug(
+                    "RMS gate passed chunk: rms=%.6f threshold=%.6f",
+                    rms,
+                    threshold,
+                )
+
             sr = 16000
             if sr != sampling_rate:
                 try:
@@ -357,6 +402,23 @@ class SileroVADModel:
             audio_ = self.collect_chunks(audio_, speech_chunks)
             logger.debug("VAD audio shape: %s", audio_.shape)
             duration_after_vad = audio_.shape[0] / sr
+
+            # Combined VAD+RMS AND gate: even if VAD detected speech,
+            # verify the RMS volume is sufficient to trust the detection.
+            # This catches cases where VAD fires on low-volume artifacts
+            # (e.g., faint background speech, electrical hum) that pass
+            # the pre-filter but shouldn't count as real speech.
+            if (
+                self.rms_gate is not None
+                and duration_after_vad > 0
+                and not self.rms_gate.confirms_speech()
+            ):
+                logger.debug(
+                    "Combined AND gate: VAD detected %.3fs speech but RMS too low, rejecting",
+                    duration_after_vad,
+                )
+                return 0.0, []
+
             return duration_after_vad, speech_chunks
         except Exception as e:
             import math
