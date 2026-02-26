@@ -43,7 +43,7 @@ class KokoroTTSOptions(TTSOptions):
 
 @lru_cache
 def get_tts_model(
-    model: Literal["kokoro", "cartesia"] = "kokoro", **kwargs
+    model: Literal["kokoro", "cartesia", "magpie"] = "kokoro", **kwargs
 ) -> TTSModel:
     if model == "kokoro":
         m = KokoroTTSModel()
@@ -51,6 +51,13 @@ def get_tts_model(
         return m
     elif model == "cartesia":
         m = CartesiaTTSModel(api_key=kwargs.get("cartesia_api_key", ""))
+        return m
+    elif model == "magpie":
+        m = MagpieTTSModel(
+            model_name=kwargs.get(
+                "model_name", "nvidia/magpie_tts_multilingual_357m"
+            ),
+        )
         return m
     else:
         raise ValueError(f"Invalid model: {model}")
@@ -162,6 +169,25 @@ class CartesiaTTSOptions(TTSOptions):
     sample_rate: int = 22_050
 
 
+MagpieSpeaker = Literal["John", "Sofia", "Aria", "Jason", "Leo"]
+MagpieLanguage = Literal["en", "es", "de", "fr", "vi", "it", "zh"]
+
+MAGPIE_SPEAKER_MAP: dict[str, int] = {
+    "John": 0,
+    "Sofia": 1,
+    "Aria": 2,
+    "Jason": 3,
+    "Leo": 4,
+}
+
+
+@dataclass
+class MagpieTTSOptions(TTSOptions):
+    speaker: MagpieSpeaker = "Sofia"
+    language: MagpieLanguage = "en"
+    apply_text_normalization: bool = True
+
+
 class CartesiaTTSModel(TTSModel):
     def __init__(self, api_key: str):
         if importlib.util.find_spec("cartesia") is None:
@@ -225,3 +251,81 @@ class CartesiaTTSModel(TTSModel):
             except StopAsyncIteration:
                 break
         return options.sample_rate, buffer
+
+
+class MagpieTTSModel(TTSModel):
+    """Text-to-Speech model using NVIDIA's MagpieTTS Multilingual.
+
+    MagpieTTS is a 357M-parameter transformer encoder-decoder model that
+    generates speech in 7 languages (en, es, de, fr, vi, it, zh) with
+    5 speaker voices.
+
+    Install:
+        pip install nemo_toolkit[tts] kaldialign
+
+    Usage:
+        from fastrtc.text_to_speech import get_tts_model, MagpieTTSOptions
+
+        model = get_tts_model("magpie")
+        options = MagpieTTSOptions(speaker="Sofia", language="en")
+        sr, audio = model.tts("Hello world!", options)
+    """
+
+    SAMPLE_RATE = 22_050
+
+    def __init__(
+        self,
+        model_name: str = "nvidia/magpie_tts_multilingual_357m",
+    ):
+        try:
+            from nemo.collections.tts.models import MagpieTTSModel as _MagpieTTSModel
+        except (ImportError, ModuleNotFoundError):
+            raise ImportError(
+                "nemo_toolkit[tts] is not installed. Install it for MagpieTTS support:\n"
+                "  pip install nemo_toolkit[tts] kaldialign"
+            )
+        self.model = _MagpieTTSModel.from_pretrained(model_name=model_name)
+
+    def tts(
+        self, text: str, options: MagpieTTSOptions | None = None
+    ) -> tuple[int, NDArray[np.float32]]:
+        options = options or MagpieTTSOptions()
+        speaker_idx = MAGPIE_SPEAKER_MAP[options.speaker]
+        audio, audio_len = self.model.do_tts(
+            text,
+            language=options.language,
+            apply_TN=options.apply_text_normalization,
+            speaker_index=speaker_idx,
+        )
+        # audio is a torch tensor on GPU/CPU; convert to numpy float32
+        audio_np = audio.cpu().numpy().astype(np.float32)
+        # Trim to actual length
+        if audio_np.ndim > 1:
+            audio_np = audio_np.squeeze()
+        if audio_len is not None:
+            length = int(audio_len) if not hasattr(audio_len, "item") else audio_len.item()
+            audio_np = audio_np[:length]
+        return self.SAMPLE_RATE, audio_np
+
+    async def stream_tts(
+        self, text: str, options: MagpieTTSOptions | None = None
+    ) -> AsyncGenerator[tuple[int, NDArray[np.float32]], None]:
+        options = options or MagpieTTSOptions()
+        sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+        for sentence in sentences:
+            if not sentence.strip():
+                continue
+            sr, audio_np = await asyncio.get_event_loop().run_in_executor(
+                None, self.tts, sentence, options
+            )
+            yield sr, audio_np
+
+    def stream_tts_sync(
+        self, text: str, options: MagpieTTSOptions | None = None
+    ) -> Generator[tuple[int, NDArray[np.float32]], None, None]:
+        options = options or MagpieTTSOptions()
+        sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+        for sentence in sentences:
+            if not sentence.strip():
+                continue
+            yield self.tts(sentence, options)

@@ -33,6 +33,7 @@ from .stream import Stream, UIArgs
 from .text_to_speech import (
     CartesiaTTSOptions,
     KokoroTTSOptions,
+    MagpieTTSOptions,
     get_tts_model,
 )
 from .tracks import (
@@ -108,6 +109,7 @@ __all__ = [
     "CloseStream",
     "get_current_context",
     "CartesiaTTSOptions",
+    "MagpieTTSOptions",
     "WebRTCData",
     "DeepFilter2Processor",
     "DeepFilterOptions",

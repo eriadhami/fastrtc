@@ -21,6 +21,7 @@ A collection of Text-to-Speech models ready to use with FastRTC. Click on the ta
 
 <div class="tag-buttons">
   <button class="tag-button" data-tag="cpu"><code>cpu</code></button>
+  <button class="tag-button" data-tag="gpu"><code>gpu</code></button>
 </div>
 
 <script>
@@ -78,6 +79,33 @@ document.querySelectorAll('.tag-button').forEach(button => {
     [:octicons-arrow-right-24: Demo](Your demo here)
     
     [:octicons-code-16: Repository](Code here)
+
+-   :speaking_head:{ .lg .middle }:eyes:{ .lg .middle } MagpieTTS Multilingual
+{: data-tags="gpu"}
+
+    ---
+
+    Description:
+    NVIDIA's [MagpieTTS](https://huggingface.co/nvidia/magpie_tts_multilingual_357m) – a 357M-parameter transformer model for multilingual speech synthesis in 7 languages (en, es, de, fr, vi, it, zh) with 5 expressive speaker voices.
+
+    Install Instructions
+    ```python
+    pip install nemo_toolkit[tts] kaldialign
+    ```
+
+    Usage
+    ```python
+    from fastrtc import get_tts_model
+    from fastrtc.text_to_speech import MagpieTTSOptions
+
+    tts = get_tts_model("magpie")
+    options = MagpieTTSOptions(speaker="Sofia", language="en")
+    sample_rate, audio = tts.tts("Hello from MagpieTTS!", options)
+    ```
+
+    [:octicons-arrow-right-24: Demo](https://huggingface.co/spaces/nvidia/magpie_tts_multilingual_demo)
+
+    [:octicons-code-16: Repository](https://huggingface.co/nvidia/magpie_tts_multilingual_357m)
 
 </div>
 
