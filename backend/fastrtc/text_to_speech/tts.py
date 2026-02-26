@@ -58,6 +58,7 @@ def get_tts_model(
                 "model_name", "nvidia/magpie_tts_multilingual_357m"
             ),
         )
+        m.tts("Hello, world!")
         return m
     else:
         raise ValueError(f"Invalid model: {model}")
@@ -315,7 +316,7 @@ class MagpieTTSModel(TTSModel):
         for sentence in sentences:
             if not sentence.strip():
                 continue
-            sr, audio_np = await asyncio.get_event_loop().run_in_executor(
+            sr, audio_np = await asyncio.get_running_loop().run_in_executor(
                 None, self.tts, sentence, options
             )
             yield sr, audio_np
